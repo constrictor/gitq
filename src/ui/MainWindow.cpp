@@ -492,6 +492,16 @@ void MainWindow::closeEvent(QCloseEvent *e) {
     QMainWindow::closeEvent(e);
 }
 
+void MainWindow::changeEvent(QEvent *e) {
+    if (e->type() == QEvent::ApplicationPaletteChange) {
+        // Light/dark theme switch: move colours that follow the theme to the new defaults.
+        Settings::instance().updateThemeColors();
+        applySettings();
+        if (m_hasSelection) showCommit(m_selected);
+    }
+    QMainWindow::changeEvent(e);
+}
+
 // ---------------------------------------------------------------------------
 // Loading
 

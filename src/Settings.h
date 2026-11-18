@@ -39,7 +39,9 @@ struct Settings {
     QString extDiffTool = QStringLiteral("meld");
     int maxRefs = 20;            // max refs to list in "Branches/Follows/Precedes"
 
-    // Colours
+    // Colours. The initialisers are the light-theme (gitk) defaults; with a dark application
+    // palette, themeDefaults() supplies dark ones. Only colours that differ from the defaults
+    // of the current theme are persisted, so the rest follow the theme.
     QColor bgColor = Qt::white;
     QColor fgColor = Qt::black;
     QColor selectBgColor = QColor(0xd9, 0xd9, 0xd9);
@@ -69,6 +71,13 @@ struct Settings {
     static Settings &instance();
     void load();
     void save() const;
+
+    // Default colours for the current application palette.
+    static Settings themeDefaults();
+    static bool darkTheme();
+    // Call after the application palette changed: colours still at the old theme's defaults
+    // switch to the new theme's defaults; customised colours are kept.
+    void updateThemeColors();
 };
 
 } // namespace gitq

@@ -186,7 +186,7 @@ void GraphDelegate::paint(QPainter *p, const QStyleOptionViewItem &optIn, const 
     x = paintRefs(p, cell, x, row, labelFont);
     if (x != labelsStart) {
         p->save();
-        p->setPen(QPen(Qt::black, 1));
+        p->setPen(QPen(st.fgColor, 1));
         int nx = nodeX(row, cell);
         int y = cell.top() + cell.height() / 2;
         p->drawLine(nx, y, labelsStart, y);

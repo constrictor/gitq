@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QHeaderView>
 #include <QLabel>
+#include <QPalette>
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <QtConcurrent>
@@ -57,7 +58,13 @@ void BlameWindow::populate(const BlameResult &r) {
         return;
     }
     m_table->setRowCount(int(r.lines.size()));
-    const QList<QColor> shades = {QColor(0xff, 0xff, 0xff), QColor(0xee, 0xf2, 0xff)};
+    // Alternate commit blocks: the view's base colour and a light tint of the highlight colour.
+    const QPalette pal = m_table->palette();
+    const QColor base = pal.color(QPalette::Base), hl = pal.color(QPalette::Highlight);
+    const QColor tint = QColor::fromRgbF(float(base.redF() * 0.88 + hl.redF() * 0.12),
+                                         float(base.greenF() * 0.88 + hl.greenF() * 0.12),
+                                         float(base.blueF() * 0.88 + hl.blueF() * 0.12));
+    const QList<QColor> shades = {base, tint};
     Oid prev;
     int shade = 0;
     for (int i = 0; i < r.lines.size(); ++i) {
