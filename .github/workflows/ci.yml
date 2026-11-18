@@ -25,10 +25,19 @@ jobs:
       - name: Build, test and package
         run: packaging/ci-build.sh
 
-      - uses: actions/upload-artifact@v7
+      # One unzipped artifact per file; the artifact takes the file's name.
+      - name: Upload .deb
+        uses: actions/upload-artifact@v7
         with:
-          name: gitq-ubuntu${{ matrix.ubuntu }}
-          path: dist/*
+          path: dist/*.deb
+          archive: false
+          if-no-files-found: error
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/*.AppImage
+          archive: false
           if-no-files-found: error
 
   release:
