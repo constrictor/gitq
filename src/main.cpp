@@ -5,29 +5,39 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QIcon>
 #include <QMessageBox>
 #include <QTimer>
 
 #include <cstdio>
+#include <string>
 
 int main(int argc, char **argv) {
+    // --help / --version work without a display
+    for (int i = 1; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--") break;
+        if (a == "--help" || a == "-h") {
+            std::puts("usage: gitq [<git rev-list options>] [<revision range>] [--] [<path>...]\n\n"
+                      "A git repository browser compatible with gitk's command line.\n"
+                      "Examples: gitq --all, gitq master..topic, gitq -- src/");
+            return 0;
+        }
+        if (a == "--version") {
+            std::printf("gitq %s\n", PROJECT_VERSION);
+            return 0;
+        }
+    }
+
     QApplication app(argc, argv);
     QApplication::setOrganizationName(QStringLiteral("gitq"));
     QApplication::setApplicationName(QStringLiteral("gitq"));
     QApplication::setApplicationVersion(QStringLiteral(PROJECT_VERSION));
+    QApplication::setDesktopFileName(QStringLiteral("gitq"));
+    QApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral("gitq")));
     gitq::LibGit2Init libgit2;
 
     QStringList args = QApplication::arguments().mid(1);
-    if (args.contains(QStringLiteral("--help")) || args.contains(QStringLiteral("-h"))) {
-        std::puts("usage: gitq [<git rev-list options>] [<revision range>] [--] [<path>...]\n\n"
-                  "A git repository browser compatible with gitk's command line.\n"
-                  "Examples: gitq --all, gitq master..topic, gitq -- src/");
-        return 0;
-    }
-    if (args.contains(QStringLiteral("--version"))) {
-        std::printf("gitq %s\n", PROJECT_VERSION);
-        return 0;
-    }
 
     QString start = QDir::currentPath();
     QString gitDir = qEnvironmentVariable("GIT_DIR");

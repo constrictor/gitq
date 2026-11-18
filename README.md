@@ -14,6 +14,15 @@ ctest --test-dir build          # unit + GUI smoke tests (run offscreen)
 ./build/gitq --all              # run inside any git repository
 ```
 
+Ubuntu packages: `apt install build-essential cmake ninja-build pkg-config qt6-base-dev libgit2-dev`.
+
+### Packages
+
+CI (`.github/workflows/ci.yml`) builds and tests on Ubuntu 24.04 and 26.04 and produces a `.deb` and an
+AppImage for each; pushing a `v*` tag attaches them to a GitHub release. `packaging/ci-build.sh` does
+the whole build inside an `ubuntu:<version>` container. To build just the `.deb` locally:
+`cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build && (cd build && cpack -G DEB)`.
+
 ## Usage
 
 The command line is gitk's: `gitq [rev-list options] [revisions] [--] [paths]`, e.g.

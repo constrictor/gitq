@@ -2,7 +2,9 @@
 #pragma once
 
 #include <git2.h>
-#include <git2/sys/errors.h>
+#if __has_include(<git2/sys/errors.h>)
+#include <git2/sys/errors.h>   // git_error_clear moved here in libgit2 1.8
+#endif
 
 #include <QHash>
 #include <QMetaType>

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=gitq
+GenericName=Git history browser
+Comment=Browse git repository history (gitk reimplemented in Qt)
+Exec=gitq --all
+Icon=gitq
+Terminal=false
+Categories=Development;RevisionControl;Qt;
+Keywords=git;gitk;history;log;
