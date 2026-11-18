@@ -1,0 +1,173 @@
+# gitq — Project Definition
+
+## 1. Summary
+
+gitq is a desktop application for browsing and inspecting the history of git repositories. It
+presents the commit graph, commit details and diffs in a single window, lets the user search and
+filter history, and offers a small set of everyday history operations (branching, tagging,
+cherry-pick, revert, reset) directly from the history view.
+
+It is written in C++20 with Qt 6 Widgets and libgit2, targets Linux desktops, and is distributed
+under the GPL v2.
+
+## 2. Problem statement
+
+Developers regularly need to answer questions about a repository's past: what changed, when, by
+whom, on which branch, and why. Command-line tools answer these one query at a time and do not show
+the shape of history. Existing graphical browsers tend to be either heavyweight IDE-style clients
+focused on committing and syncing, or older tools that are hard to extend and do not integrate with
+modern desktops (themes, high-DPI, flexible layouts).
+
+gitq fills the gap with a fast, focused history browser that:
+
+- opens instantly on large repositories and streams history as it loads;
+- accepts the same revision and filtering syntax developers already use with git;
+- is built on a clean, layered codebase that is straightforward to test and extend.
+
+## 3. Goals
+
+1. **History browsing.** Show the commit graph with branch/tag/remote labels, and let the user
+   inspect any commit's metadata, message and diff.
+2. **git-native selection.** Accept `git rev-list` style arguments (revisions, ranges, ref globs,
+   date/author/message filters, path limiting) and produce the same commit set and parent
+   relationships git does.
+3. **Search.** Find commits by text in any field, by touched paths, by added/removed strings and by
+   changed lines matching a pattern; search within diffs.
+4. **Everyday operations.** Create branches and tags, check out, cherry-pick, revert, reset, write
+   patches, and compare arbitrary commits, all from context menus.
+5. **Performance.** Remain responsive on repositories with hundreds of thousands of commits: load
+   incrementally, lay out the graph incrementally, and run expensive work (reference reachability,
+   searches) in the background.
+6. **Desktop integration.** Follow the system light/dark theme, support configurable fonts and
+   colours, remember window and pane layout, and install as a regular desktop application.
+7. **Maintainability.** Keep git access, graph layout, models and UI in separate layers with
+   automated tests that compare results against the git CLI.
+
+## 4. Non-goals
+
+- Staging, committing, or editing the index and work tree (beyond resets and the results of
+  cherry-pick/revert).
+- Network operations: fetch, pull, push, remote management.
+- Merge/rebase conflict resolution UI; conflicted operations are left for the user to finish with
+  git.
+- Hosting-service integration (pull requests, issues, CI status).
+- Platforms other than Linux, for now.
+
+## 5. Target users
+
+- Developers who live on the command line and want a visual view of history that understands the
+  revision syntax they already know.
+- Reviewers and maintainers who need to trace where a change came from, which releases contain it,
+  and how branches relate.
+
+## 6. Functional scope
+
+### 6.1 Launch and repository selection
+
+- `gitq [rev-list options] [revisions] [--] [paths]`, run inside a repository (or with `GIT_DIR`).
+- Paths given on the command line are relative to the current directory.
+- `--help` and `--version` work without a display.
+
+### 6.2 Commit list
+
+- Graph column with lane assignment, merge/fork edges, and elision of long edges (drawn as arrows).
+- Reference labels for local branches, remote branches, tags, with the checked-out branch emphasised.
+- Author and date columns; rows for uncommitted and staged local changes.
+- Streaming load with a row counter; selection by SHA prefix, ref name or any revision expression;
+  back/forward navigation history.
+
+### 6.3 Commit details and diff
+
+- Author, committer, tags, clickable parent/child links, and the branches containing the commit and
+  the nearest tags before/after it (computed in the background).
+- Unified diff with configurable context and whitespace handling, word-level diff modes, and views
+  of the old or new file version. Merge commits show a combined diff.
+- Search within the diff.
+
+### 6.4 File list
+
+- Patch mode: lists files changed by the commit and keeps the selection in sync with the diff
+  position.
+- Tree mode: browse the commit's tree and view file contents.
+
+### 6.5 Search and views
+
+- Find bar: text in all fields or a specific one (headline, message, author, committer), touched
+  paths, string added/removed (pickaxe), lines changed matching a regex; exact, case-insensitive or
+  regex matching; next/previous navigation with highlighted matches.
+- Named views: saved combinations of revisions, filters and paths that can be created, edited,
+  deleted and remembered between sessions.
+
+### 6.6 Operations
+
+- Commit context menu: diff against selected/marked commit, make patch, create tag, create branch,
+  copy commit reference, write commit to file, cherry-pick, revert, reset (soft/mixed/hard),
+  mark/return to mark/compare with mark, find common descendant.
+- Branch label menu: checkout, rename, remove, copy name.
+- File menu: highlight commits touching the file, external diff, blame at the parent or at this
+  commit, copy path.
+- Diff menu: show the origin of a line, blame a line.
+- Built-in blame window.
+
+### 6.7 Layout and preferences
+
+- Commit list, diff and file list are dockable panes: they can be docked side by side, tabbed
+  together, or floated, with the layout remembered and resettable.
+- Preferences for general behaviour, colours and fonts; a reference list window; a key-binding
+  reference.
+- Settings are stored in `~/.config/gitq/gitq.conf`.
+
+## 7. Non-functional requirements
+
+| Area            | Requirement                                                                                 |
+|-----------------|---------------------------------------------------------------------------------------------|
+| Correctness     | Commit selection, ordering and parent rewriting match `git rev-list --parents` for the supported options. |
+| Responsiveness  | First rows appear while history is still loading; background work never blocks the UI thread. |
+| Safety          | Destructive operations (hard reset, branch removal) require confirmation. Operations run through libgit2, so git hooks are not executed; this is documented. |
+| Portability     | Builds with CMake ≥ 3.28 and a C++20 compiler on current Ubuntu LTS and interim releases.   |
+| Packaging       | Each release ships a `.deb` and an AppImage per supported Ubuntu version.                    |
+| Quality         | Every change passes the unit and offscreen GUI test suites in CI.                           |
+| Licensing       | GPL v2.                                                                                     |
+
+## 8. Architecture
+
+```
+src/git/     libgit2 layer, no widgets: repository access, revision-argument parsing, streaming log
+             loader, diff engine, operations, search, blame, nearby-reference computation
+src/graph/   incremental graph lane layout with long-edge elision
+src/model/   Qt item models for the commit list (with graph) and the file list
+src/ui/      main window, panes, delegates, diff view, dialogs, blame window
+tests/       Qt Test suites; fixtures are created with the git CLI and results compared with git
+```
+
+Dependencies: Qt 6 (Widgets, Concurrent, Test), libgit2 ≥ 1.7, and the Qt Advanced Docking System
+(fetched and linked statically at build time).
+
+Layering rules:
+
+- `git/`, `graph/` and `model/` do not depend on widgets and are tested without a UI.
+- The UI talks to git only through the `git/` layer.
+- Long-running work runs on worker threads and reports back through signals.
+
+## 9. Delivery
+
+- **Build:** `cmake -B build -G Ninja && cmake --build build`.
+- **Test:** `ctest --test-dir build` (unit tests plus GUI smoke tests run offscreen).
+- **CI:** GitHub Actions builds, tests and packages on Ubuntu 24.04 and 26.04 for every push to the
+  default branch and every pull request; `v*` tags publish the packages as a GitHub release.
+
+## 10. Success criteria
+
+- Opening a large repository (100k+ commits) shows the first screen of history within a second and
+  stays responsive while the rest loads.
+- For every supported rev-list option, the displayed commits and parents match git's output in the
+  test suite.
+- The common review workflow — find a commit, read its diff, see which branches and tags contain
+  it, blame a line, compare with another commit — is possible without leaving the application.
+- The package installs and runs on each supported Ubuntu release from CI artifacts alone.
+
+## 11. Future directions
+
+- Multiple repositories in one window, with a start page of recent repositories.
+- Additional platforms (macOS, Windows).
+- Optional running of git hooks for operations that create commits.
