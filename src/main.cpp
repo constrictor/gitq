@@ -1,12 +1,13 @@
 // gitq: a Qt reimplementation of gitk.
 #include "Settings.h"
 #include "git/GitPtr.h"
+#include "git/Repository.h"
 #include "ui/MainWindow.h"
 
 #include <QApplication>
 #include <QDir>
 #include <QIcon>
-#include <QMessageBox>
+#include <QStatusBar>
 #include <QTimer>
 
 #include <cstdio>
@@ -44,28 +45,32 @@ int main(int argc, char **argv) {
     if (!gitDir.isEmpty()) start = gitDir;
 
     gitq::Settings::instance().load();
+    gitq::MainWindow w;
+    // The tabs of the previous run, plus the repository gitq was started in (made current).
+    w.restoreSession();
     try {
-        gitq::MainWindow w(start, args);
-        // Paths given on the command line are relative to the current directory.
         gitq::Repository repo = gitq::Repository::open(start);
+        // Paths given on the command line are relative to the current directory.
+        QString prefix;
         QString wd = repo.workdir();
         if (!wd.isEmpty()) {
             QString rel = QDir(wd).relativeFilePath(QDir::currentPath());
-            if (!rel.startsWith(QLatin1String("..")) && rel != QLatin1String(".")) w.setCommandLinePrefix(rel);
+            if (!rel.startsWith(QLatin1String("..")) && rel != QLatin1String(".")) prefix = rel;
         }
-        w.show();
-        // Debug aid: GITQ_SCREENSHOT=file.png grabs the window after loading and quits.
-        const QString shot = qEnvironmentVariable("GITQ_SCREENSHOT");
-        if (!shot.isEmpty()) {
-            QTimer::singleShot(qEnvironmentVariableIntValue("GITQ_SCREENSHOT_DELAY") ?: 2000, &w, [&w, shot] {
-                w.grab().save(shot);
-                QApplication::quit();
-            });
-        }
-        return app.exec();
+        w.openRepository(start, args, prefix);
     } catch (const gitq::GitError &e) {
-        QMessageBox::critical(nullptr, QStringLiteral("gitq"),
-                              QStringLiteral("Cannot find a git repository here.\n\n%1").arg(e.message()));
-        return 1;
+        // Not in a repository: just the previous tabs (or the welcome page).
+        if (!args.isEmpty() || !gitDir.isEmpty())
+            w.statusBar()->showMessage(QStringLiteral("Cannot find a git repository here: %1").arg(e.message()));
     }
+    w.show();
+    // Debug aid: GITQ_SCREENSHOT=file.png grabs the window after loading and quits.
+    const QString shot = qEnvironmentVariable("GITQ_SCREENSHOT");
+    if (!shot.isEmpty()) {
+        QTimer::singleShot(qEnvironmentVariableIntValue("GITQ_SCREENSHOT_DELAY") ?: 2000, &w, [&w, shot] {
+            w.grab().save(shot);
+            QApplication::quit();
+        });
+    }
+    return app.exec();
 }

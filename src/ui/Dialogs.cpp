@@ -143,7 +143,10 @@ QString keyBindingsText() {
     return QStringLiteral(
         "Gitq key bindings:\n\n"
         "Ctrl-Q\t\tQuit\n"
-        "Ctrl-W\t\tClose window\n"
+        "Ctrl-O\t\tOpen a repository in a new tab\n"
+        "Ctrl-W\t\tClose tab\n"
+        "Ctrl-Tab\tNext tab\n"
+        "Ctrl-Shift-Tab\tPrevious tab\n"
         "Home\t\tMove to first commit\n"
         "End\t\tMove to last commit\n"
         "Up, p, k\tMove up one commit\n"

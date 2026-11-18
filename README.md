@@ -30,6 +30,12 @@ the whole build inside an `ubuntu:<version>` container. To build just the `.deb`
 The command line is gitk's: `gitq [rev-list options] [revisions] [--] [paths]`, e.g.
 `gitq --all`, `gitq master..topic`, `gitq v1.0...v2.0`, `gitq --author=alice -- src/`.
 
+Each repository opens in a tab, and the open tabs are remembered. Started inside a repository, gitq
+reopens the previous tabs and adds (or switches to) that repository, applying the command line to it;
+started elsewhere, it just reopens the previous tabs. With no tab open, a welcome page lists the
+recently opened repositories. File ▸ Open repository (Ctrl-O) opens another one; Ctrl-W closes a tab,
+Ctrl-Tab / Ctrl-Shift-Tab switch between them.
+
 Supported rev-list options: revisions, `^rev`, `a..b`, `a...b`, `rev^!`, `rev^@`, `--not`, `--all`,
 `--branches[=glob]`, `--tags[=glob]`, `--remotes[=glob]`, `--glob=`, `--date-order`, `--topo-order`,
 `--first-parent`, `--merges`, `--no-merges`, `--min-parents`, `--max-parents`, `-n`/`--max-count`,
@@ -39,8 +45,10 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
 
 ## Features (gitk parity)
 
+- Tabs: several repositories in one window, restored on the next start; welcome page with recent
+  repositories.
 - Visual Studio style dockable panes: drag the Commits, Diff or Files tab to dock it beside another
-  pane, tab it with one, or float it in its own window. The layout is remembered; View ▸ Reset layout
+  pane, tab it with one, or float it in its own window. All repository tabs share the layout, which is remembered; View ▸ Reset layout
   restores the gitk arrangement and the View menu reopens closed panes.
 - Commit list with graph, ref labels (heads, remotes, tags, HEAD in bold), author, date;
   streaming load; long edges elided with arrows like gitk; local uncommitted / staged changes rows.
@@ -77,7 +85,8 @@ src/git/     libgit2 layer (no widgets): Repository, RevArgs, LogLoader, DiffEng
              Blame, NearbyRefs
 src/graph/   GraphLayout: incremental lane assignment with long-edge elision
 src/model/   CommitModel (list + graph), FileListModel
-src/ui/      MainWindow, GraphDelegate, DiffView, dialogs, BlameWindow
+src/ui/      MainWindow (tabs, menus, panes), RepoTab (one repository's views and commands), WelcomePage,
+             GraphDelegate, DiffView, dialogs, BlameWindow
 tests/       Qt Test suites; fixtures are built with the git CLI and compared with git's output.
              bench_load / bench_diff are manual benchmarks.
 ```

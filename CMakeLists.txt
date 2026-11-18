@@ -47,6 +47,8 @@ FetchContent_MakeAvailable(qtads)
 
 add_library(gitq_ui STATIC
   src/ui/MainWindow.h src/ui/MainWindow.cpp
+  src/ui/RepoTab.h src/ui/RepoTab.cpp
+  src/ui/WelcomePage.h src/ui/WelcomePage.cpp
   src/ui/CommitListView.h src/ui/CommitListView.cpp
   src/ui/GraphDelegate.h src/ui/GraphDelegate.cpp
   src/ui/DiffView.h src/ui/DiffView.cpp

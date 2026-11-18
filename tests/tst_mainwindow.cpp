@@ -6,6 +6,7 @@
 #include "ui/DiffView.h"
 #include "ui/MainWindow.h"
 #include "ui/PrefsDialog.h"
+#include "ui/RepoTab.h"
 #include "ui/ViewDialog.h"
 
 #include <QApplication>
@@ -13,6 +14,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
+#include <QListWidget>
+#include <QTabBar>
 #include <QRadioButton>
 #include <QSettings>
 #include <QStandardPaths>
@@ -63,6 +66,7 @@ private slots:
         QCoreApplication::setOrganizationName(QStringLiteral("gitq-test"));
         Settings::instance().load();
         QSettings().remove(QStringLiteral("window/dockState"));   // tests expect the default layout
+        QSettings().remove(QStringLiteral("session"));            // open tabs, recent repositories
         Settings::instance().showNearTags = true;
         repo = std::make_unique<test::TestRepo>();
         auto &r = *repo;
@@ -290,6 +294,80 @@ private slots:
             QCOMPARE(files->dockAreaWidget(), commits->dockAreaWidget());
             reset(&w);
             QVERIFY(files->dockAreaWidget() != commits->dockAreaWidget());
+            w.close();
+        }
+    }
+
+    void tabsAndSession() {
+        QSettings().remove(QStringLiteral("session"));
+        test::TestRepo other;
+        other.commit("Other repository", {{"a.txt", "a\n"}});
+        auto canon = [](const QString &p) { return QFileInfo(p).canonicalFilePath(); };
+        auto tabModel = [](RepoTab *t) {
+            return static_cast<CommitModel *>(t->findChild<QTreeView *>(QStringLiteral("commitList"))->model());
+        };
+        {
+            MainWindow w(repo->path(), {});
+            w.resize(1200, 900);
+            w.show();
+            waitLoaded(&w);
+            RepoTab *first = w.currentTab();
+            w.openRepository(other.path());
+            QCOMPARE(w.tabCount(), 2);
+            QCOMPARE(canon(w.currentTab()->displayPath()), canon(other.path()));
+            QTRY_COMPARE(tabModel(w.currentTab())->rowCount(), 1);
+            QCOMPARE(child<QTabBar>(&w, "repoTabs")->tabText(1), QFileInfo(other.path()).fileName());
+
+            // Opening an open repository switches to its tab; new arguments reopen it in place.
+            w.openRepository(repo->path());
+            QCOMPARE(w.tabCount(), 2);
+            QCOMPARE(w.currentTab(), first);
+            w.openRepository(other.path(), {QStringLiteral("--"), QStringLiteral("a.txt")});
+            QCOMPARE(w.tabCount(), 2);
+            QCOMPARE(w.tab(0), first);
+            QCOMPARE(w.currentTab(), w.tab(1));
+            QCOMPARE(w.tab(1)->args(), (QStringList{"--", "a.txt"}));
+            QCOMPARE(w.tab(1)->views().size(), 2);   // "All files" + "Command line"
+            w.setCurrentTab(0);
+            w.close();   // saves the session
+        }
+        {
+            // The previous tabs come back; only the current one loads.
+            MainWindow w;
+            w.restoreSession();
+            w.resize(1200, 900);
+            w.show();
+            QCOMPARE(w.tabCount(), 2);
+            QCOMPARE(w.currentTab(), w.tab(0));
+            QCOMPARE(canon(w.tab(0)->displayPath()), canon(repo->path()));
+            QCOMPARE(w.tab(1)->args(), (QStringList{"--", "a.txt"}));
+            QTRY_COMPARE(tabModel(w.tab(0))->rowCount(), 5);
+            QVERIFY(!w.tab(1)->isActivated());
+            w.setCurrentTab(1);
+            QTRY_COMPARE(tabModel(w.tab(1))->rowCount(), 1);
+
+            // Without tabs the welcome page lists the recent repositories, most recent first.
+            w.closeTab(0);
+            w.closeTab(0);
+            QCOMPARE(w.tabCount(), 0);
+            QCOMPARE(w.windowTitle(), QStringLiteral("gitq"));
+            auto *recent = child<QListWidget>(&w, "recentList");
+            QTRY_VERIFY(recent->isVisible());
+            QCOMPARE(recent->count(), 2);
+            QCOMPARE(canon(recent->item(0)->data(Qt::UserRole).toString()), canon(other.path()));
+            QCOMPARE(canon(recent->item(1)->data(Qt::UserRole).toString()), canon(repo->path()));
+            shot(&w, QStringLiteral("08-welcome"));
+            emit recent->itemClicked(recent->item(1));
+            QTRY_COMPARE(w.tabCount(), 1);
+            QCOMPARE(canon(w.currentTab()->displayPath()), canon(repo->path()));
+            QTRY_COMPARE(tabModel(w.currentTab())->rowCount(), 5);
+            w.close();
+        }
+        {
+            // All tabs were closed but one: the next run restores just that.
+            MainWindow w;
+            w.restoreSession();
+            QCOMPARE(w.tabCount(), 1);
             w.close();
         }
     }
