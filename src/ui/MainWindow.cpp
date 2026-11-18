@@ -93,6 +93,7 @@ void MainWindow::buildUi() {
     // stack with one page per tab.
     ads::CDockManager::setConfigFlags(ads::CDockManager::DefaultOpaqueConfig);
     ads::CDockManager::setConfigFlag(ads::CDockManager::FocusHighlighting, true);
+    ads::CDockManager::setConfigFlag(ads::CDockManager::TabsAtBottom, true);
     m_dockManager = new ads::CDockManager(m_workspace);
     wl->addWidget(m_dockManager, 1);
     m_central->addWidget(m_workspace);
