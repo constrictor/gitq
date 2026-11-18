@@ -11,15 +11,24 @@ namespace gitq {
 
 GraphDelegate::GraphDelegate(CommitModel *model, QObject *parent) : QStyledItemDelegate(parent), m_model(model) {}
 
+namespace {
+constexpr int kMultiPad = 4;   // vertical padding of a multi-line row, split above and below
+}
+
 QSize GraphDelegate::sizeHint(const QStyleOptionViewItem &opt, const QModelIndex &idx) const {
     QSize s = QStyledItemDelegate::sizeHint(opt, idx);
     s.setHeight(qMax(s.height(), opt.fontMetrics.height() + 4));
+    if (m_multiline) s.setHeight(2 * s.height() + kMultiPad);
     return s;
+}
+
+int GraphDelegate::lineHeight(const QRect &cell) const {
+    return m_multiline ? (cell.height() - kMultiPad) / 2 : cell.height();
 }
 
 GraphDelegate::Geometry GraphDelegate::geometry(const QRect &cell) const {
     const Settings &st = Settings::instance();
-    double col = cell.height() * 0.75;
+    double col = lineHeight(cell) * 0.75;
     // Shrink columns only when the widest row would not fit in maxGraphPct of the column
     // (rows wider than maxGraphWidth lanes don't force further shrinking).
     int maxCols = qBound(1, m_model->graph().maxWidth(), qMax(1, st.maxGraphWidth));
@@ -34,7 +43,7 @@ int GraphDelegate::nodeX(int row, const QRect &cell) const {
     return int(g.left + (m_model->graph().row(row).nodeCol + 0.5) * g.colWidth);
 }
 
-void GraphDelegate::paintGraph(QPainter *p, const QRect &cell, int row) const {
+void GraphDelegate::paintGraph(QPainter *p, const QRect &cell, double nodeY, int lineH, int row) const {
     const Settings &st = Settings::instance();
     const GraphLayout &graph = m_model->graph();
     if (row >= graph.rowCount()) return;
@@ -45,8 +54,8 @@ void GraphDelegate::paintGraph(QPainter *p, const QRect &cell, int row) const {
         const auto &cols = st.graphColors;
         return cols.isEmpty() ? QColor(Qt::black) : cols.at(c % cols.size());
     };
-    const double top = cell.top(), mid = cell.top() + cell.height() / 2.0, bottom = cell.bottom() + 1;
-    const double lw = qMax(1.0, cell.height() / 12.0);
+    const double top = cell.top(), mid = nodeY, bottom = cell.bottom() + 1;
+    const double lw = qMax(1.0, lineH / 12.0);
 
     p->save();
     p->setRenderHint(QPainter::Antialiasing, true);
@@ -54,7 +63,7 @@ void GraphDelegate::paintGraph(QPainter *p, const QRect &cell, int row) const {
         p->setPen(QPen(color(c), lw, Qt::SolidLine, Qt::FlatCap, Qt::RoundJoin));
         p->drawLine(QPointF(x1, y1), QPointF(x2, y2));
     };
-    const double ah = qMax(3.0, cell.height() / 4.0), aw = qMax(2.0, g.colWidth / 3.5);
+    const double ah = qMax(3.0, lineH / 4.0), aw = qMax(2.0, g.colWidth / 3.5);
     auto arrow = [&](double ax, double tipY, double dir, int c) {   // dir -1: up, +1: down
         QPolygonF tri;
         tri << QPointF(ax, tipY) << QPointF(ax - aw, tipY - dir * ah) << QPointF(ax + aw, tipY - dir * ah);
@@ -76,7 +85,7 @@ void GraphDelegate::paintGraph(QPainter *p, const QRect &cell, int row) const {
     }
 
     const CommitInfo *c = m_model->commitAt(row);
-    double r = qMin(g.colWidth * 0.32, cell.height() * 0.24);
+    double r = qMin(g.colWidth * 0.32, lineH * 0.24);
     QColor fill(Qt::blue);
     if (c) {
         if (c->id.isWorkdir()) fill = st.workdirCircleColor;
@@ -90,7 +99,7 @@ void GraphDelegate::paintGraph(QPainter *p, const QRect &cell, int row) const {
     p->restore();
 }
 
-int GraphDelegate::paintRefs(QPainter *p, const QRect &cell, int x, int row, const QFont &font) const {
+int GraphDelegate::paintRefs(QPainter *p, const QRect &line, int x, int row, const QFont &font) const {
     const Settings &st = Settings::instance();
     const CommitInfo *c = m_model->commitAt(row);
     QList<QPair<QRect, RefInfo>> rects;
@@ -105,8 +114,8 @@ int GraphDelegate::paintRefs(QPainter *p, const QRect &cell, int x, int row, con
     }
     p->save();
     p->setRenderHint(QPainter::Antialiasing, true);
-    const int h = cell.height() - 4;
-    const int y = cell.top() + 2;
+    const int h = line.height() - 4;
+    const int y = line.top() + 2;
     const QString headBranch = m_model->refs().headBranch;
     for (const RefInfo &ref : refs) {
         QFont f = font;
@@ -161,7 +170,8 @@ void GraphDelegate::paint(QPainter *p, const QStyleOptionViewItem &optIn, const 
     const int row = idx.row();
     const CommitInfo *c = m_model->commitAt(row);
 
-    QColor bg = st.bgColor;
+    // Subtle stripes on odd rows; the mark and the selection take precedence.
+    QColor bg = row % 2 ? Settings::mix(st.bgColor, st.fgColor, 0.05) : st.bgColor;
     if (c && !m_model->marked().isNull() && c->id == m_model->marked()) bg = st.markBgColor;
     if (opt.state & QStyle::State_Selected) bg = st.selectBgColor;
     p->fillRect(cell, bg);
@@ -175,31 +185,59 @@ void GraphDelegate::paint(QPainter *p, const QStyleOptionViewItem &optIn, const 
         return;
     }
 
-    paintGraph(p, cell, row);
+    // First line: graph node, ref labels and headline. In multi-line mode the graph lanes still
+    // span the whole row.
+    const int lineH = lineHeight(cell);
+    const QRect line1(cell.left(), cell.top() + (m_multiline ? kMultiPad / 2 : 0), cell.width(), lineH);
+    const double nodeY = line1.top() + lineH / 2.0;
+    paintGraph(p, cell, nodeY, lineH, row);
     Geometry g = geometry(cell);
     int w = row < m_model->graph().rowCount() ? m_model->graph().row(row).width : 1;
-    int x = int(g.left + w * g.colWidth) + 4;
+    const int graphRight = int(g.left + w * g.colWidth) + 4;
+    int x = graphRight;
 
     // Line from the node to the labels, as gitk does.
     QFont labelFont = font;
     int labelsStart = x;
-    x = paintRefs(p, cell, x, row, labelFont);
+    x = paintRefs(p, line1, x, row, labelFont);
     if (x != labelsStart) {
         p->save();
         p->setPen(QPen(st.fgColor, 1));
         int nx = nodeX(row, cell);
-        int y = cell.top() + cell.height() / 2;
-        p->drawLine(nx, y, labelsStart, y);
+        p->drawLine(QPointF(nx, nodeY), QPointF(labelsStart, nodeY));
         p->restore();
         x += 4;
     }
 
     p->setFont(font);
     p->setPen(st.fgColor);
-    QRect textRect(x, cell.top(), cell.right() - x, cell.height());
+    QRect textRect(x, line1.top(), cell.right() - x, lineH);
     if (textRect.width() > 0)
         p->drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
                     QFontMetrics(font).elidedText(opt.text, Qt::ElideRight, textRect.width()));
+
+    if (!m_multiline || !c) return;
+
+    // Second line: author on the left, date on the right, dimmed and never bold.
+    QFont plain = font;
+    plain.setBold(false);
+    const QFontMetrics fm(plain);
+    p->setFont(plain);
+    p->setPen(Settings::mix(st.fgColor, bg, 0.4));
+    QRect line2(graphRight, line1.bottom() + 1, cell.right() - 4 - graphRight, lineH);
+    if (line2.width() <= 0) return;
+    const QString date = c->id.isPseudo() ? QString() : m_model->formatDate(c->author.time);
+    int authorWidth = line2.width();
+    if (!date.isEmpty()) {
+        const int dw = fm.horizontalAdvance(date);
+        if (dw <= line2.width()) {
+            p->drawText(line2, Qt::AlignVCenter | Qt::AlignRight, date);
+            authorWidth = line2.width() - dw - fm.horizontalAdvance(QLatin1Char(' ')) * 3;
+        }
+    }
+    if (authorWidth > 0)
+        p->drawText(QRect(line2.left(), line2.top(), authorWidth, lineH), Qt::AlignVCenter | Qt::AlignLeft,
+                    fm.elidedText(c->author.name, Qt::ElideRight, authorWidth));
 }
 
 bool GraphDelegate::refAt(int row, const QPoint &pos, RefInfo *out) const {

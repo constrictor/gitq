@@ -1,4 +1,5 @@
-// Paints the graph, ref labels and headline in the first column of the commit list.
+// Paints the commit list rows: graph, ref labels and headline in the first column, plain text in the
+// others. In multi-line mode the first column holds two lines: headline above, author and date below.
 #pragma once
 
 #include "git/CommitInfo.h"
@@ -18,6 +19,9 @@ public:
     void paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &idx) const override;
     QSize sizeHint(const QStyleOptionViewItem &opt, const QModelIndex &idx) const override;
 
+    void setMultiline(bool on) { m_multiline = on; }
+    bool multiline() const { return m_multiline; }
+
     // Ref label under a point (in viewport coordinates) of the given row, if any.
     bool refAt(int row, const QPoint &pos, RefInfo *out) const;
     // Horizontal centre of the node of `row` in the column rect (for hit tests / scrolling).
@@ -28,11 +32,14 @@ private:
         double colWidth;
         double left;
     };
+    // Height of one text line within a row of the given rect.
+    int lineHeight(const QRect &cell) const;
     Geometry geometry(const QRect &cell) const;
-    void paintGraph(QPainter *p, const QRect &cell, int row) const;
-    int paintRefs(QPainter *p, const QRect &cell, int x, int row, const QFont &font) const;
+    void paintGraph(QPainter *p, const QRect &cell, double nodeY, int lineH, int row) const;
+    int paintRefs(QPainter *p, const QRect &line, int x, int row, const QFont &font) const;
 
     CommitModel *m_model;
+    bool m_multiline = false;
     mutable QHash<int, QList<QPair<QRect, RefInfo>>> m_labelRects;
 };
 

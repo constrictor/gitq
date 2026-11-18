@@ -35,11 +35,6 @@ const ColorDef kColors[] = {
     {"link", &Settings::linkColor},
 };
 
-QColor mix(const QColor &a, const QColor &b, double t) {
-    return QColor::fromRgbF(float(a.redF() * (1 - t) + b.redF() * t), float(a.greenF() * (1 - t) + b.greenF() * t),
-                            float(a.blueF() * (1 - t) + b.blueF() * t));
-}
-
 // Defaults the current colours were derived from (for updateThemeColors()).
 Settings &activeDefaults() {
     static Settings d;
@@ -47,6 +42,11 @@ Settings &activeDefaults() {
 }
 
 } // namespace
+
+QColor Settings::mix(const QColor &a, const QColor &b, double t) {
+    return QColor::fromRgbF(float(a.redF() * (1 - t) + b.redF() * t), float(a.greenF() * (1 - t) + b.greenF() * t),
+                            float(a.blueF() * (1 - t) + b.blueF() * t));
+}
 
 bool Settings::darkTheme() {
     const QPalette pal = QGuiApplication::palette();
@@ -112,6 +112,7 @@ void Settings::load() {
     autoSelect = q.value(QStringLiteral("autoSelect"), autoSelect).toBool();
     autoSelLen = q.value(QStringLiteral("autoSelLen"), autoSelLen).toInt();
     hideRemotes = q.value(QStringLiteral("hideRemotes"), hideRemotes).toBool();
+    commitListMultiline = q.value(QStringLiteral("commitListMultiline"), commitListMultiline).toBool();
     limitDiffs = q.value(QStringLiteral("limitDiffs"), limitDiffs).toBool();
     showNearTags = q.value(QStringLiteral("showNearTags"), showNearTags).toBool();
     wrapDiff = q.value(QStringLiteral("wrapDiff"), wrapDiff).toBool();
@@ -172,6 +173,7 @@ void Settings::save() const {
     q.setValue(QStringLiteral("autoSelect"), autoSelect);
     q.setValue(QStringLiteral("autoSelLen"), autoSelLen);
     q.setValue(QStringLiteral("hideRemotes"), hideRemotes);
+    q.setValue(QStringLiteral("commitListMultiline"), commitListMultiline);
     q.setValue(QStringLiteral("limitDiffs"), limitDiffs);
     q.setValue(QStringLiteral("showNearTags"), showNearTags);
     q.setValue(QStringLiteral("wrapDiff"), wrapDiff);

@@ -1293,6 +1293,18 @@ void RepoTab::applySettings() {
     pal.setColor(QPalette::Base, st.bgColor);
     pal.setColor(QPalette::Text, st.fgColor);
     m_list->setPalette(pal);
+    // Multi-line rows show author and date under the headline: drop those columns and the header
+    // (QHeaderView keeps the hidden sections' sizes for switching back). Applied every time, as a
+    // header state restored from the settings may come from the other mode.
+    const bool multi = st.commitListMultiline;
+    m_list->header()->setSectionHidden(CommitModel::AuthorColumn, multi);
+    m_list->header()->setSectionHidden(CommitModel::DateColumn, multi);
+    m_list->header()->setVisible(!multi);
+    if (m_delegate->multiline() != multi) {
+        m_delegate->setMultiline(multi);
+        m_list->doItemsLayout();   // row height changed
+        if (m_list->currentIndex().isValid()) m_list->scrollTo(m_list->currentIndex(), QAbstractItemView::PositionAtCenter);
+    }
     m_list->viewport()->update();
 }
 

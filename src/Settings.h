@@ -29,6 +29,7 @@ struct Settings {
     bool autoSelect = true;      // auto-select SHA1 in the id field
     int autoSelLen = 40;
     bool hideRemotes = false;
+    bool commitListMultiline = false;   // commit list: subject over author/date instead of columns
     bool limitDiffs = true;      // limit diffs to the view's paths
     bool showNearTags = true;
     bool wrapDiff = false;
@@ -75,6 +76,8 @@ struct Settings {
     // Default colours for the current application palette.
     static Settings themeDefaults();
     static bool darkTheme();
+    // Linear blend of two colours: t = 0 gives a, t = 1 gives b.
+    static QColor mix(const QColor &a, const QColor &b, double t);
     // Call after the application palette changed: colours still at the old theme's defaults
     // switch to the new theme's defaults; customised colours are kept.
     void updateThemeColors();

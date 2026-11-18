@@ -11,6 +11,7 @@
 
 #include <QApplication>
 #include <QComboBox>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
@@ -68,6 +69,7 @@ private slots:
         QSettings().remove(QStringLiteral("window/dockState"));   // tests expect the default layout
         QSettings().remove(QStringLiteral("session"));            // open tabs, recent repositories
         Settings::instance().showNearTags = true;
+        Settings::instance().commitListMultiline = false;
         repo = std::make_unique<test::TestRepo>();
         auto &r = *repo;
         r.commit("Initial commit", {{"README", "hello\n"}, {"src/main.c", "int main;\nint x = 1;\n"}});
@@ -203,6 +205,39 @@ private slots:
         QVERIFY(diffText(&w).contains(QStringLiteral("+edited in work tree")));
         QVERIFY(diffText(&w).startsWith(QStringLiteral("Local uncommitted changes")));
         repo->git({"checkout", "--", "README"});
+    }
+
+    void multilineCommitList() {
+        MainWindow w(repo->path(), {});
+        w.resize(1200, 900);
+        w.show();
+        waitLoaded(&w);
+        auto *list = child<QTreeView>(&w, "commitList");
+        QAction *toggle = nullptr;
+        for (QAction *a : w.findChildren<QAction *>())
+            if (a->text() == QStringLiteral("&Multi-line commit list")) toggle = a;
+        QVERIFY(toggle);
+        QVERIFY(!toggle->isChecked());
+        const int singleHeight = list->sizeHintForRow(0);
+        QVERIFY(list->header()->isVisible());
+        shot(&w, QStringLiteral("05-table-list"));
+
+        toggle->trigger();
+        QVERIFY(Settings::instance().commitListMultiline);
+        QVERIFY(list->sizeHintForRow(0) > singleHeight * 2 - 1);
+        QVERIFY(list->header()->isSectionHidden(CommitModel::AuthorColumn));
+        QVERIFY(list->header()->isSectionHidden(CommitModel::DateColumn));
+        QVERIFY(!list->header()->isVisible());
+        QCOMPARE(list->visualRect(model(&w)->index(1, 0)).top(), list->sizeHintForRow(0));
+        shot(&w, QStringLiteral("06-multiline-list"));
+
+        toggle->trigger();
+        QVERIFY(!Settings::instance().commitListMultiline);
+        QCOMPARE(list->sizeHintForRow(0), singleHeight);
+        QVERIFY(!list->header()->isSectionHidden(CommitModel::AuthorColumn));
+        QVERIFY(!list->header()->isSectionHidden(CommitModel::DateColumn));
+        QVERIFY(list->header()->isVisible());
+        QVERIFY(list->header()->sectionSize(CommitModel::AuthorColumn) > 0);
     }
 
     void viewDialogRoundTrip() {

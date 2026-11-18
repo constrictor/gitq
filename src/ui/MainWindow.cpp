@@ -204,6 +204,15 @@ void MainWindow::rebuildViewMenu() {
         }
         m_viewMenu->addSeparator();
     }
+    a = m_viewMenu->addAction(tr("&Multi-line commit list"), this, [this](bool on) {
+        Settings &st = Settings::instance();
+        st.commitListMultiline = on;
+        st.save();
+        for (RepoTab *t : std::as_const(m_tabs)) t->applySettings();
+    });
+    a->setCheckable(true);
+    a->setChecked(Settings::instance().commitListMultiline);
+    m_viewMenu->addSeparator();
     for (ads::CDockWidget *dw : {m_commitsPane, m_diffPane, m_filesPane}) m_viewMenu->addAction(dw->toggleViewAction());
     m_viewMenu->addAction(tr("&Reset layout"), this, [this] { m_dockManager->restoreState(m_defaultDockState, DockStateVersion); });
     attachToPanes(m_viewMenu->actions());
