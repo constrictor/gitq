@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.28)
 project(gitq VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -34,6 +34,17 @@ target_include_directories(gitq_core PUBLIC src)
 target_link_libraries(gitq_core PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent PkgConfig::LIBGIT2)
 target_compile_options(gitq_core PRIVATE -Wall -Wextra)
 
+# Qt Advanced Docking System: Visual Studio style dockable panes (static, built from source).
+include(FetchContent)
+set(QT_VERSION_MAJOR 6)
+set(BUILD_STATIC ON)
+set(BUILD_EXAMPLES OFF)
+FetchContent_Declare(qtads
+  URL https://github.com/githubuser0xFFFF/Qt-Advanced-Docking-System/archive/refs/tags/v5.1.1.tar.gz
+  URL_HASH SHA256=9ce947acbb1984946f9145c976e42e6984f99b98fb414dd7354a290af6d4ff04
+  EXCLUDE_FROM_ALL SYSTEM)
+FetchContent_MakeAvailable(qtads)
+
 add_library(gitq_ui STATIC
   src/ui/MainWindow.h src/ui/MainWindow.cpp
   src/ui/CommitListView.h src/ui/CommitListView.cpp
@@ -44,7 +55,7 @@ add_library(gitq_ui STATIC
   src/ui/Dialogs.h src/ui/Dialogs.cpp
   src/ui/BlameWindow.h src/ui/BlameWindow.cpp
 )
-target_link_libraries(gitq_ui PUBLIC gitq_core)
+target_link_libraries(gitq_ui PUBLIC gitq_core ads::qtadvanceddocking-qt6)
 target_compile_options(gitq_ui PRIVATE -Wall -Wextra)
 target_compile_definitions(gitq_ui PUBLIC PROJECT_VERSION="${PROJECT_VERSION}")
 
@@ -52,10 +63,11 @@ add_executable(gitq src/main.cpp)
 target_link_libraries(gitq PRIVATE gitq_ui)
 target_compile_options(gitq PRIVATE -Wall -Wextra)
 include(GNUInstallDirs)
-install(TARGETS gitq)
-install(FILES packaging/gitq.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-install(FILES packaging/gitq.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
-install(FILES README.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+# COMPONENT gitq keeps the ADS install rules (headers, static lib) out of the packages.
+install(TARGETS gitq COMPONENT gitq)
+install(FILES packaging/gitq.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications COMPONENT gitq)
+install(FILES packaging/gitq.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps COMPONENT gitq)
+install(FILES README.md DESTINATION ${CMAKE_INSTALL_DOCDIR} COMPONENT gitq)
 
 # Packaging: `cpack -G DEB` in the build directory
 set(CPACK_PACKAGE_NAME gitq)
@@ -70,6 +82,7 @@ set(CPACK_DEBIAN_PACKAGE_DEPENDS qt6-qpa-plugins)   # xcb/wayland platform plugi
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS git)
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 set(CPACK_STRIP_FILES ON)
+set(CPACK_COMPONENTS_ALL gitq)
 include(CPack)
 
 enable_testing()

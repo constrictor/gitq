@@ -11,7 +11,7 @@ if [ "${SKIP_DEPS:-0}" != 1 ]; then
     apt-get update
     apt-get install -y --no-install-recommends \
         build-essential cmake ninja-build pkg-config file dpkg-dev git ca-certificates wget \
-        qt6-base-dev qt6-base-dev-tools libgit2-dev \
+        qt6-base-dev qt6-base-dev-tools qt6-base-private-dev libxcb1-dev libgit2-dev \
         qt6-qpa-plugins libgl-dev fonts-dejavu-core desktop-file-utils
 fi
 
@@ -48,7 +48,7 @@ for t in linuxdeploy linuxdeploy-plugin-qt; do
     chmod +x "$TOOLS/$t-$APPARCH.AppImage"
 done
 rm -rf build/AppDir
-DESTDIR="$SRC/build/AppDir" cmake --install build
+DESTDIR="$SRC/build/AppDir" cmake --install build --component gitq
 export QMAKE=$(command -v qmake6 || echo /usr/lib/qt6/bin/qmake)
 export LDAI_OUTPUT="dist/gitq-${VERSION}-${SUFFIX}-${APPARCH}.AppImage"
 export PATH="$TOOLS:$PATH"

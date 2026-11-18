@@ -37,12 +37,15 @@
 #include <QSettings>
 #include <QShortcut>
 #include <QSpinBox>
-#include <QSplitter>
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QtConcurrent>
+
+#include <DockAreaWidget.h>
+#include <DockManager.h>
+#include <DockWidget.h>
 
 #ifdef __GLIBC__
 #include <malloc.h>
@@ -120,12 +123,11 @@ MainWindow::~MainWindow() {
 // Construction
 
 void MainWindow::buildUi() {
-    auto *central = new QWidget;
-    auto *outer = new QVBoxLayout(central);
-    outer->setContentsMargins(2, 2, 2, 2);
-    m_vsplit = new QSplitter(Qt::Vertical);
-    outer->addWidget(m_vsplit);
-    setCentralWidget(central);
+    // The three panes are Visual Studio style dock widgets: drag a pane's tab to dock it next to
+    // another, tab it with one, or float it. The dock manager installs itself as central widget.
+    ads::CDockManager::setConfigFlags(ads::CDockManager::DefaultOpaqueConfig);
+    ads::CDockManager::setConfigFlag(ads::CDockManager::FocusHighlighting, true);
+    m_dockManager = new ads::CDockManager(this);
 
     // --- top: commit list + bars
     auto *top = new QWidget;
@@ -201,10 +203,8 @@ void MainWindow::buildUi() {
     m_findField->addItems({tr("All fields"), tr("Headline"), tr("Comments"), tr("Author"), tr("Committer")});
     fbar->addWidget(m_findField);
     tl->addLayout(fbar);
-    m_vsplit->addWidget(top);
 
-    // --- bottom: diff pane + file list
-    m_hsplit = new QSplitter(Qt::Horizontal);
+    // --- diff pane
     auto *left = new QWidget;
     auto *ll = new QVBoxLayout(left);
     ll->setContentsMargins(0, 0, 0, 0);
@@ -245,7 +245,6 @@ void MainWindow::buildUi() {
     m_diff = new DiffView;
     m_diff->setObjectName(QStringLiteral("diffView"));
     ll->addWidget(m_diff, 1);
-    m_hsplit->addWidget(left);
 
     auto *right = new QWidget;
     auto *rl = new QVBoxLayout(right);
@@ -266,12 +265,22 @@ void MainWindow::buildUi() {
     m_files->setContextMenuPolicy(Qt::CustomContextMenu);
     m_files->setUniformItemSizes(true);
     rl->addWidget(m_files, 1);
-    m_hsplit->addWidget(right);
-    m_hsplit->setStretchFactor(0, 3);
-    m_hsplit->setStretchFactor(1, 1);
-    m_vsplit->addWidget(m_hsplit);
-    m_vsplit->setStretchFactor(0, 2);
-    m_vsplit->setStretchFactor(1, 3);
+
+    // --- docking: default layout is commit list on top, diff and file list side by side below
+    auto pane = [this](QWidget *content, const QString &title, const char *name) {
+        auto *dw = new ads::CDockWidget(m_dockManager, title);
+        dw->setObjectName(QLatin1String(name));
+        dw->setWidget(content, ads::CDockWidget::ForceNoScrollArea);
+        return dw;
+    };
+    m_commitsPane = pane(top, tr("Commits"), "commitsPane");
+    m_diffPane = pane(left, tr("Diff"), "diffPane");
+    m_filesPane = pane(right, tr("Files"), "filesPane");
+    ads::CDockAreaWidget *topArea = m_dockManager->addDockWidget(ads::TopDockWidgetArea, m_commitsPane);
+    ads::CDockAreaWidget *diffArea = m_dockManager->addDockWidget(ads::BottomDockWidgetArea, m_diffPane);
+    m_dockManager->addDockWidget(ads::RightDockWidgetArea, m_filesPane, diffArea);
+    m_dockManager->setSplitterSizes(topArea, {2000, 3000});
+    m_dockManager->setSplitterSizes(diffArea, {3000, 1000});
 
     // --- wiring
     connect(m_list->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
@@ -349,6 +358,8 @@ void MainWindow::buildMenus() {
 
     QMenu *edit = menuBar()->addMenu(tr("&Edit"));
     edit->addAction(tr("&Preferences"), this, &MainWindow::doPrefs);
+    attachToPanes(file->actions());
+    attachToPanes(edit->actions());
 
     m_viewMenu = menuBar()->addMenu(tr("&View"));
 
@@ -385,13 +396,30 @@ void MainWindow::rebuildViewMenu() {
         connect(a, &QAction::triggered, this, [this, i] { showView(i); });
     }
     m_delViewAct->setEnabled(m_currentView > 0);
+    m_viewMenu->addSeparator();
+    for (ads::CDockWidget *dw : {m_commitsPane, m_diffPane, m_filesPane}) m_viewMenu->addAction(dw->toggleViewAction());
+    m_viewMenu->addAction(tr("&Reset layout"), this, [this] { m_dockManager->restoreState(m_defaultDockState, DockStateVersion); });
+    attachToPanes(m_viewMenu->actions());
+}
+
+// Shortcuts of window-wide actions must also work while focus is in a floating pane, which is a
+// separate top-level window: associate them with the panes too (an action's WindowShortcut fires
+// when any of its widgets is in the active window).
+void MainWindow::attachToPanes(const QList<QAction *> &actions) {
+    for (QAction *a : actions) {
+        if (a->shortcut().isEmpty()) continue;
+        for (ads::CDockWidget *dw : {m_commitsPane, m_diffPane, m_filesPane}) dw->addAction(a);
+    }
 }
 
 void MainWindow::buildShortcuts() {
     auto key = [this](const QKeySequence &seq, auto fn) {
-        auto *s = new QShortcut(seq, this);
-        s->setContext(Qt::WindowShortcut);
-        connect(s, &QShortcut::activated, this, fn);
+        auto *a = new QAction(this);
+        a->setShortcut(seq);
+        a->setShortcutContext(Qt::WindowShortcut);
+        connect(a, &QAction::triggered, this, fn);
+        addAction(a);
+        attachToPanes({a});
     };
     auto keyNav = [this](const QKeySequence &seq, auto fn) {
         for (QWidget *w : {static_cast<QWidget *>(m_list), static_cast<QWidget *>(m_diff), static_cast<QWidget *>(m_files)}) {
@@ -474,8 +502,12 @@ void MainWindow::buildShortcuts() {
 void MainWindow::restoreGeometryState() {
     QSettings q;
     if (!restoreGeometry(q.value(QStringLiteral("window/geometry")).toByteArray())) resize(1100, 800);
-    m_vsplit->restoreState(q.value(QStringLiteral("window/vsplit")).toByteArray());
-    m_hsplit->restoreState(q.value(QStringLiteral("window/hsplit")).toByteArray());
+    m_defaultDockState = m_dockManager->saveState(DockStateVersion);
+    QByteArray dock = q.value(QStringLiteral("window/dockState")).toByteArray();
+    if (!dock.isEmpty() && !m_dockManager->restoreState(dock, DockStateVersion))
+        m_dockManager->restoreState(m_defaultDockState, DockStateVersion);
+    q.remove(QStringLiteral("window/vsplit"));   // pre-docking splitter layout
+    q.remove(QStringLiteral("window/hsplit"));
     QByteArray hdr = q.value(QStringLiteral("window/listHeader")).toByteArray();
     if (!hdr.isEmpty()) m_list->header()->restoreState(hdr);
 }
@@ -483,8 +515,7 @@ void MainWindow::restoreGeometryState() {
 void MainWindow::closeEvent(QCloseEvent *e) {
     QSettings q;
     q.setValue(QStringLiteral("window/geometry"), saveGeometry());
-    q.setValue(QStringLiteral("window/vsplit"), m_vsplit->saveState());
-    q.setValue(QStringLiteral("window/hsplit"), m_hsplit->saveState());
+    q.setValue(QStringLiteral("window/dockState"), m_dockManager->saveState(DockStateVersion));
     q.setValue(QStringLiteral("window/listHeader"), m_list->header()->saveState());
     Settings::instance().save();
     m_loader->cancel();

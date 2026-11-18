@@ -5,7 +5,9 @@ The goal is gitk's behaviour and layout on a codebase that is easy to extend.
 
 ## Build
 
-Requirements: CMake ≥ 3.21, a C++20 compiler, Qt 6 (Widgets, Concurrent, Test), libgit2 ≥ 1.7.
+Requirements: CMake ≥ 3.28, a C++20 compiler, Qt 6 (Widgets, Concurrent, Test, private GUI headers),
+libxcb, libgit2 ≥ 1.7. The [Qt Advanced Docking System](https://github.com/githubuser0xFFFF/Qt-Advanced-Docking-System)
+is downloaded at configure time and linked statically.
 
 ```sh
 cmake -B build -G Ninja
@@ -14,7 +16,7 @@ ctest --test-dir build          # unit + GUI smoke tests (run offscreen)
 ./build/gitq --all              # run inside any git repository
 ```
 
-Ubuntu packages: `apt install build-essential cmake ninja-build pkg-config qt6-base-dev libgit2-dev`.
+Ubuntu packages: `apt install build-essential cmake ninja-build pkg-config qt6-base-dev qt6-base-private-dev libxcb1-dev libgit2-dev`.
 
 ### Packages
 
@@ -37,6 +39,9 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
 
 ## Features (gitk parity)
 
+- Visual Studio style dockable panes: drag the Commits, Diff or Files tab to dock it beside another
+  pane, tab it with one, or float it in its own window. The layout is remembered; View ▸ Reset layout
+  restores the gitk arrangement and the View menu reopens closed panes.
 - Commit list with graph, ref labels (heads, remotes, tags, HEAD in bold), author, date;
   streaming load; long edges elided with arrows like gitk; local uncommitted / staged changes rows.
 - SHA1 field (goto by id prefix, ref name or any revision), back/forward history, row counter.
@@ -63,6 +68,7 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
   Conflicted cherry-picks/reverts are left in the work tree for resolution with git.
 - `--first-parent` views show only the followed parent (git prints all parents).
 - Settings live in `~/.config/gitq/gitq.conf`, not `~/.config/git/gitk`.
+- The commit list, diff and file list are dockable panes rather than a fixed layout.
 
 ## Layout
 

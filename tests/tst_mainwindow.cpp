@@ -14,8 +14,12 @@
 #include <QLineEdit>
 #include <QListView>
 #include <QRadioButton>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTreeView>
+
+#include <DockManager.h>
+#include <DockWidget.h>
 
 using namespace gitq;
 
@@ -58,6 +62,7 @@ private slots:
         QStandardPaths::setTestModeEnabled(true);
         QCoreApplication::setOrganizationName(QStringLiteral("gitq-test"));
         Settings::instance().load();
+        QSettings().remove(QStringLiteral("window/dockState"));   // tests expect the default layout
         Settings::instance().showNearTags = true;
         repo = std::make_unique<test::TestRepo>();
         auto &r = *repo;
@@ -225,6 +230,68 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(model(&w)->rowCount() > 0, 10000);
         QTest::qWait(200);
         QCOMPARE(model(&w)->rowCount(), 2);
+    }
+
+    void dockablePanes() {
+        auto reset = [](QWidget *w) {
+            for (QAction *a : w->findChildren<QAction *>())
+                if (a->text() == QStringLiteral("&Reset layout")) return a->trigger();
+            qFatal("no Reset layout action");
+        };
+        {
+            MainWindow w(repo->path(), {});
+            w.resize(1200, 900);
+            w.show();
+            QVERIFY(QTest::qWaitForWindowActive(&w));
+            waitLoaded(&w);
+            auto *commits = child<ads::CDockWidget>(&w, "commitsPane");
+            auto *diffPane = child<ads::CDockWidget>(&w, "diffPane");
+            auto *files = child<ads::CDockWidget>(&w, "filesPane");
+            QVERIFY(commits->dockAreaWidget() != files->dockAreaWidget());
+            QVERIFY(diffPane->dockAreaWidget() != files->dockAreaWidget());
+
+            // Closing a pane hides it; the View menu brings it back.
+            diffPane->toggleViewAction()->trigger();
+            QVERIFY(!child<DiffView>(&w, "diffView")->isVisible());
+            reset(&w);
+            QTRY_VERIFY(child<DiffView>(&w, "diffView")->isVisible());
+
+            // Window shortcuts still work with focus in a floating pane.
+            diffPane->setFloating();
+            QVERIFY(diffPane->isFloating());
+            QWidget *floating = diffPane->window();
+            QVERIFY(floating != &w);
+            floating->activateWindow();
+            QVERIFY(QTest::qWaitForWindowActive(floating));
+            auto *diff = child<DiffView>(floating, "diffView");
+            diff->setFocus();
+            QString before = child<QLineEdit>(&w, "shaEdit")->text();
+            QTest::keyClick(diff, Qt::Key_N);
+            QTRY_VERIFY(child<QLineEdit>(&w, "shaEdit")->text() != before);
+
+            // Tab the file list with the commit list; the layout is saved on close.
+            reset(&w);
+            w.findChild<ads::CDockManager *>()->addDockWidgetTabToArea(files, commits->dockAreaWidget());
+            QCOMPARE(files->dockAreaWidget(), commits->dockAreaWidget());
+            w.close();
+        }
+        {
+            // A pane hidden behind another tab is detached from the widget tree, so look it up globally.
+            auto pane = [](const char *name) {
+                for (QWidget *x : QApplication::allWidgets())
+                    if (x->objectName() == QLatin1String(name)) return static_cast<ads::CDockWidget *>(x);
+                qFatal("no pane %s", name);
+            };
+            MainWindow w(repo->path(), {});
+            w.resize(1200, 900);
+            w.show();
+            auto *commits = pane("commitsPane");
+            auto *files = pane("filesPane");
+            QCOMPARE(files->dockAreaWidget(), commits->dockAreaWidget());
+            reset(&w);
+            QVERIFY(files->dockAreaWidget() != commits->dockAreaWidget());
+            w.close();
+        }
     }
 };
 

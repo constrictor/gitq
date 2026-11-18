@@ -28,9 +28,13 @@ class QMenu;
 class QProgressBar;
 class QRadioButton;
 class QSpinBox;
-class QSplitter;
 class QTimer;
 class QToolButton;
+
+namespace ads {
+class CDockManager;
+class CDockWidget;
+} // namespace ads
 
 namespace gitq {
 
@@ -67,6 +71,7 @@ private:
     void buildShortcuts();
     void restoreGeometryState();
     void rebuildViewMenu();
+    void attachToPanes(const QList<QAction *> &actions);
 
     // loading
     void startLoad(bool keepSelection);
@@ -148,7 +153,11 @@ private:
     LogLoader *m_loader;
     SearchWorker *m_searcher;
 
-    QSplitter *m_vsplit, *m_hsplit;
+    // Bump when the panes change so an incompatible saved layout falls back to the default.
+    static constexpr int DockStateVersion = 1;
+    ads::CDockManager *m_dockManager;
+    ads::CDockWidget *m_commitsPane, *m_diffPane, *m_filesPane;
+    QByteArray m_defaultDockState;
     QLineEdit *m_shaEdit;
     QToolButton *m_backBtn, *m_fwdBtn;
     QLabel *m_rowLabel;
