@@ -65,6 +65,10 @@ gitq fills the gap with a fast, focused history browser that:
 ### 6.1 Launch and repository selection
 
 - `gitq [rev-list options] [revisions] [--] [paths]`, run inside a repository (or with `GIT_DIR`).
+- Each repository opens in its own tab; open tabs are restored on the next start. Started inside a
+  repository, gitq adds (or switches to) that repository's tab and applies the command line to it.
+- With no tab open, a welcome page lists recently opened repositories; further repositories can be
+  opened from the File menu.
 - Paths given on the command line are relative to the current directory.
 - `--help` and `--version` work without a display.
 
@@ -112,7 +116,7 @@ gitq fills the gap with a fast, focused history browser that:
 ### 6.7 Layout and preferences
 
 - Commit list, diff and file list are dockable panes: they can be docked side by side, tabbed
-  together, or floated, with the layout remembered and resettable.
+  together, or floated, with the layout shared by all repository tabs, remembered and resettable.
 - Preferences for general behaviour, colours and fonts; a reference list window; a key-binding
   reference.
 - Settings are stored in `~/.config/gitq/gitq.conf`.
@@ -168,6 +172,5 @@ Layering rules:
 
 ## 11. Future directions
 
-- Multiple repositories in one window, with a start page of recent repositories.
 - Additional platforms (macOS, Windows).
 - Optional running of git hooks for operations that create commits.
