@@ -47,8 +47,10 @@ struct Settings {
     QColor bgColor = Qt::white;
     QColor fgColor = Qt::black;
     QColor selectBgColor = QColor(0xd9, 0xd9, 0xd9);
-    QList<QColor> graphColors = {QColor(0x00, 0xff, 0x00), Qt::red, Qt::blue, Qt::magenta,
-                                 Qt::darkGray, QColor(0xa5, 0x2a, 0x2a), QColor(0xff, 0xa5, 0x00)};
+    // Lane colours of the commit graph: distinct hues of similar weight, readable on the background.
+    QList<QColor> graphColors = {QColor(0x1f, 0x78, 0xd1), QColor(0xd9, 0x3f, 0x3f), QColor(0x2e, 0x9d, 0x4f),
+                                 QColor(0x8e, 0x5c, 0xd9), QColor(0xe0, 0x82, 0x1e), QColor(0x13, 0x9c, 0x9c),
+                                 QColor(0xc8, 0x3e, 0x8f), QColor(0x8a, 0x6a, 0x3c)};
     QColor diffOldColor = QColor(0xc3, 0x00, 0x00);
     QColor diffNewColor = QColor(0x00, 0x98, 0x00);
     QColor diffHunkColor = Qt::blue;
@@ -65,7 +67,6 @@ struct Settings {
     QColor linkColor = Qt::blue;
     QColor workdirCircleColor = Qt::red;
     QColor indexCircleColor = QColor(0x00, 0xff, 0x00);
-    QColor mainHeadCircleColor = Qt::yellow;
 
     // Saved views ("remember this view")
     QList<ViewDef> views;
@@ -76,6 +77,9 @@ struct Settings {
 
     // Default colours for the current application palette.
     static Settings themeDefaults();
+    // Defaults of earlier versions (gitk's colours): a stored colour equal to one of them counts as
+    // not customised, so it follows the current defaults.
+    static Settings legacyDefaults();
     static bool darkTheme();
     // Linear blend of two colours: t = 0 gives a, t = 1 gives b.
     static QColor mix(const QColor &a, const QColor &b, double t);

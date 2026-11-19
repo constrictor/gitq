@@ -60,9 +60,9 @@ Settings Settings::themeDefaults() {
     d.bgColor = pal.color(QPalette::Base);
     d.fgColor = pal.color(QPalette::Text);
     d.selectBgColor = mix(d.bgColor, d.fgColor, 0.25);
-    d.graphColors = {QColor(0x4e, 0xd8, 0x4e), QColor(0xff, 0x5f, 0x5f), QColor(0x6c, 0xa8, 0xff),
-                     QColor(0xff, 0x6b, 0xff), QColor(0xa8, 0xa8, 0xa8), QColor(0xd2, 0x8a, 0x4a),
-                     QColor(0xff, 0xb3, 0x40)};
+    d.graphColors = {QColor(0x4d, 0xa3, 0xff), QColor(0xff, 0x6b, 0x6b), QColor(0x51, 0xcf, 0x66),
+                     QColor(0xb1, 0x97, 0xfc), QColor(0xff, 0xa9, 0x4d), QColor(0x3b, 0xc9, 0xdb),
+                     QColor(0xf0, 0x65, 0xa8), QColor(0xc9, 0xa2, 0x7a)};
     d.diffOldColor = QColor(0xff, 0x7b, 0x72);
     d.diffNewColor = QColor(0x56, 0xd3, 0x64);
     d.diffHunkColor = QColor(0x6c, 0xa8, 0xff);
@@ -74,6 +74,13 @@ Settings Settings::themeDefaults() {
     d.currentSearchBgColor = QColor(0xa8, 0x55, 0x00);
     d.linkColor = QColor(0x6c, 0xa8, 0xff);
     // Ref labels keep light backgrounds with black text, as in gitk.
+    return d;
+}
+
+Settings Settings::legacyDefaults() {
+    Settings d;
+    d.graphColors = {QColor(0x00, 0xff, 0x00), Qt::red, Qt::blue, Qt::magenta,
+                     Qt::darkGray, QColor(0xa5, 0x2a, 0x2a), QColor(0xff, 0xa5, 0x00)};
     return d;
 }
 
@@ -128,6 +135,7 @@ void Settings::load() {
     // A stored colour equal to either theme's default counts as not customised (older versions
     // saved every colour).
     const Settings light;
+    const Settings legacy = legacyDefaults();
     const Settings defs = themeDefaults();
     activeDefaults() = defs;
     q.beginGroup(QStringLiteral("colors"));
@@ -136,14 +144,15 @@ void Settings::load() {
         QVariant v = q.value(QLatin1String(c.key));
         if (!v.isValid()) continue;
         QColor col(v.toString());
-        if (col.isValid() && col != light.*c.member && col != defs.*c.member) this->*c.member = col;
+        if (col.isValid() && col != light.*c.member && col != defs.*c.member && col != legacy.*c.member)
+            this->*c.member = col;
     }
     graphColors = defs.graphColors;
     QStringList gc = q.value(QStringLiteral("graph")).toStringList();
     if (!gc.isEmpty()) {
         QList<QColor> cols;
         for (const QString &s : gc) cols << QColor(s);
-        if (cols != light.graphColors && cols != defs.graphColors) graphColors = cols;
+        if (cols != light.graphColors && cols != defs.graphColors && cols != legacy.graphColors) graphColors = cols;
     }
     q.endGroup();
 

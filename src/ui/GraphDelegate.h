@@ -35,7 +35,7 @@ private:
     // Height of one text line within a row of the given rect.
     int lineHeight(const QRect &cell) const;
     Geometry geometry(const QRect &cell) const;
-    void paintGraph(QPainter *p, const QRect &cell, double nodeY, int lineH, int row) const;
+    void paintGraph(QPainter *p, const QRect &cell, double nodeY, int lineH, int row, const QColor &bg) const;
     int paintRefs(QPainter *p, const QRect &line, int x, int row, const QFont &font) const;
 
     CommitModel *m_model;

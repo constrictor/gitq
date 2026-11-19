@@ -43,7 +43,7 @@ int GraphDelegate::nodeX(int row, const QRect &cell) const {
     return int(g.left + (m_model->graph().row(row).nodeCol + 0.5) * g.colWidth);
 }
 
-void GraphDelegate::paintGraph(QPainter *p, const QRect &cell, double nodeY, int lineH, int row) const {
+void GraphDelegate::paintGraph(QPainter *p, const QRect &cell, double nodeY, int lineH, int row, const QColor &bg) const {
     const Settings &st = Settings::instance();
     const GraphLayout &graph = m_model->graph();
     if (row >= graph.rowCount()) return;
@@ -52,16 +52,26 @@ void GraphDelegate::paintGraph(QPainter *p, const QRect &cell, double nodeY, int
     auto x = [&](int c) { return g.left + (c + 0.5) * g.colWidth; };
     auto color = [&](int c) {
         const auto &cols = st.graphColors;
-        return cols.isEmpty() ? QColor(Qt::black) : cols.at(c % cols.size());
+        return cols.isEmpty() ? st.fgColor : cols.at(c % cols.size());
     };
     const double top = cell.top(), mid = nodeY, bottom = cell.bottom() + 1;
-    const double lw = qMax(1.0, lineH / 12.0);
+    const double lw = qBound(1.5, lineH / 9.0, 3.0);
 
     p->save();
     p->setRenderHint(QPainter::Antialiasing, true);
+    // A lane that moves to another column is drawn as an S-curve, vertical at both ends, so that it
+    // joins the halves of the rows above and below smoothly.
     auto line = [&](double x1, double y1, double x2, double y2, int c) {
-        p->setPen(QPen(color(c), lw, Qt::SolidLine, Qt::FlatCap, Qt::RoundJoin));
-        p->drawLine(QPointF(x1, y1), QPointF(x2, y2));
+        p->setPen(QPen(color(c), lw, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p->setBrush(Qt::NoBrush);
+        if (qFuzzyCompare(x1, x2)) {
+            p->drawLine(QPointF(x1, y1), QPointF(x2, y2));
+            return;
+        }
+        const double ym = (y1 + y2) / 2;
+        QPainterPath path(QPointF(x1, y1));
+        path.cubicTo(QPointF(x1, ym), QPointF(x2, ym), QPointF(x2, y2));
+        p->drawPath(path);
     };
     const double ah = qMax(3.0, lineH / 4.0), aw = qMax(2.0, g.colWidth / 3.5);
     auto arrow = [&](double ax, double tipY, double dir, int c) {   // dir -1: up, +1: down
@@ -84,18 +94,34 @@ void GraphDelegate::paintGraph(QPainter *p, const QRect &cell, double nodeY, int
         }
     }
 
+    // The node: filled with its lane colour; merges hollow; HEAD with a ring around it; local
+    // changes and boundary commits as outlines.
     const CommitInfo *c = m_model->commitAt(row);
-    double r = qMin(g.colWidth * 0.32, lineH * 0.24);
-    QColor fill(Qt::blue);
+    const QPointF centre(x(gr.nodeCol), mid);
+    const double r = qMin(g.colWidth * 0.34, lineH * 0.26);
+    const QColor lane = color(gr.nodeColor);
+    QPen pen(lane, lw);
+    QBrush fill(lane);
     if (c) {
-        if (c->id.isWorkdir()) fill = st.workdirCircleColor;
-        else if (c->id.isIndex()) fill = st.indexCircleColor;
-        else if (m_model->isHead(c->id)) fill = st.mainHeadCircleColor;
-        else if (c->boundary) fill = Qt::white;
+        if (c->id.isWorkdir() || c->id.isIndex()) {
+            pen = QPen(c->id.isWorkdir() ? st.workdirCircleColor : st.indexCircleColor, lw, Qt::DotLine);
+            fill = bg;
+        } else if (c->boundary) {
+            pen = QPen(Settings::mix(st.fgColor, bg, 0.5), lw, Qt::DashLine);
+            fill = bg;
+        } else if (c->parents.size() > 1) {
+            fill = bg;
+        }
     }
-    p->setPen(QPen(st.fgColor, 1));
+    p->setPen(pen);
     p->setBrush(fill);
-    p->drawEllipse(QPointF(x(gr.nodeCol), mid), r, r);
+    p->drawEllipse(centre, r, r);
+    if (c && m_model->isHead(c->id)) {
+        p->setBrush(Qt::NoBrush);
+        p->setPen(QPen(st.fgColor, qMax(1.0, lw * 0.75)));
+        const double ring = r + lw * 1.5;
+        p->drawEllipse(centre, ring, ring);
+    }
     p->restore();
 }
 
@@ -190,7 +216,7 @@ void GraphDelegate::paint(QPainter *p, const QStyleOptionViewItem &optIn, const 
     const int lineH = lineHeight(cell);
     const QRect line1(cell.left(), cell.top() + (m_multiline ? kMultiPad / 2 : 0), cell.width(), lineH);
     const double nodeY = line1.top() + lineH / 2.0;
-    paintGraph(p, cell, nodeY, lineH, row);
+    paintGraph(p, cell, nodeY, lineH, row, bg);
     Geometry g = geometry(cell);
     int w = row < m_model->graph().rowCount() ? m_model->graph().row(row).width : 1;
     const int graphRight = int(g.left + w * g.colWidth) + 4;

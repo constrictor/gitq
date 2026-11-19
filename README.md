@@ -51,7 +51,8 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
   pane, tab it with one, or float it in its own window. To dock a floating pane again, drag its title bar onto one of the drop markers
   that appear over the main window. All repository tabs share the layout, which is remembered; View ▸ Reset layout
   restores the gitk arrangement and the View menu reopens closed panes.
-- Commit list with graph, ref labels (heads, remotes, tags, HEAD in bold), author, date;
+- Commit list with graph (one colour per lane, curved lane changes, hollow merge commits, a ring around
+  HEAD), ref labels (heads, remotes, tags, HEAD in bold), author, date;
   streaming load; long edges elided with arrows like gitk; local uncommitted / staged changes rows.
 - SHA1 field (goto by id prefix, ref name or any revision), back/forward history, row counter.
 - Find bar: *containing* (all fields / headline / comments / author / committer), *touching paths*,
