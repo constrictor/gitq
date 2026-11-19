@@ -1,5 +1,6 @@
 #include "TestRepo.h"
 #include "git/Ops.h"
+#include "ui/RefPills.h"
 
 using namespace gitq;
 
@@ -7,6 +8,46 @@ class TestOps : public QObject {
     Q_OBJECT
     LibGit2Init init;
 private slots:
+    void upstreamAheadBehind() {
+        test::TestRepo r;
+        const QString a = r.commit("a", {{"f", "1\n"}});
+        r.git({"remote", "add", "origin", r.path()});
+        r.git({"update-ref", "refs/remotes/origin/master", a});
+        r.git({"update-ref", "refs/remotes/origin/side", a});
+        r.git({"config", "branch.master.remote", "origin"});
+        r.git({"config", "branch.master.merge", "refs/heads/master"});
+        r.git({"branch", "-q", "side", a});
+        r.git({"config", "branch.side.remote", "origin"});
+        r.git({"config", "branch.side.merge", "refs/heads/side"});
+        r.commit("b", {{"f", "2\n"}});
+        r.commit("c", {{"f", "3\n"}});
+        RefSet refs = r.open().loadRefs();
+        auto find = [&](const QString &name) {
+            for (const RefInfo &ref : refs.refs)
+                if (ref.name == name) return ref;
+            qFatal("no ref %s", qPrintable(name));
+        };
+        const RefInfo master = find("master");
+        QCOMPARE(master.upstream, QString("origin/master"));
+        QCOMPARE(master.ahead, 2);
+        QCOMPARE(master.behind, 0);
+        QCOMPARE(find("side").upstream, QString("origin/side"));
+        QCOMPARE(find("side").ahead, 0);
+
+        // A branch and its upstream at the same commit share a label.
+        const QList<RefPill> pills = groupRefPills(refs.refsFor(Oid::fromHex(a)), refs.headBranch);
+        QCOMPARE(pills.size(), 2);   // side + origin/side, origin/master
+        for (const RefPill &p : pills) {
+            if (p.ref.name == QLatin1String("side")) {
+                QVERIFY(p.remote);
+                QCOMPARE(p.remote->name, QString("origin/side"));
+            } else {
+                QCOMPARE(p.ref.name, QString("origin/master"));
+                QVERIFY(!p.remote);
+            }
+        }
+    }
+
     void branchesAndTags() {
         test::TestRepo r;
         QString a = r.commit("a", {{"f", "1\n"}});

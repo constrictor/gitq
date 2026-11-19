@@ -24,6 +24,7 @@ signals:
 protected:
     void contextMenuEvent(QContextMenuEvent *e) override;
     void mousePressEvent(QMouseEvent *e) override;
+    bool viewportEvent(QEvent *e) override;
 
 private:
     GraphDelegate *m_delegate = nullptr;

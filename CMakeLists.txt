@@ -53,6 +53,8 @@ add_library(gitq_ui STATIC
   src/ui/WelcomePage.h src/ui/WelcomePage.cpp
   src/ui/CommitListView.h src/ui/CommitListView.cpp
   src/ui/GraphDelegate.h src/ui/GraphDelegate.cpp
+  src/ui/Glyphs.h src/ui/Glyphs.cpp
+  src/ui/RefPills.h src/ui/RefPills.cpp
   src/ui/DiffView.h src/ui/DiffView.cpp
   src/ui/ViewDialog.h src/ui/ViewDialog.cpp
   src/ui/PrefsDialog.h src/ui/PrefsDialog.cpp

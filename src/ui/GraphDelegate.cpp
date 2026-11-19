@@ -2,6 +2,7 @@
 
 #include "Settings.h"
 #include "model/CommitModel.h"
+#include "ui/RefPills.h"
 
 #include <QApplication>
 #include <QPainter>
@@ -126,64 +127,18 @@ void GraphDelegate::paintGraph(QPainter *p, const QRect &cell, double nodeY, int
 }
 
 int GraphDelegate::paintRefs(QPainter *p, const QRect &line, int x, int row, const QFont &font) const {
-    const Settings &st = Settings::instance();
     const CommitInfo *c = m_model->commitAt(row);
-    QList<QPair<QRect, RefInfo>> rects;
-    if (!c) {
-        m_labelRects.remove(row);
-        return x;
-    }
-    const QList<RefInfo> refs = m_model->refsFor(c->id);
+    const QList<RefInfo> refs = c ? m_model->refsFor(c->id) : QList<RefInfo>();
     if (refs.isEmpty()) {
         m_labelRects.remove(row);
         return x;
     }
-    p->save();
-    p->setRenderHint(QPainter::Antialiasing, true);
-    const int h = line.height() - 4;
-    const int y = line.top() + 2;
-    const QString headBranch = m_model->refs().headBranch;
-    for (const RefInfo &ref : refs) {
-        QFont f = font;
-        if (ref.kind == RefInfo::LocalBranch && ref.name == headBranch) f.setBold(true);
-        QFontMetrics fm(f);
-        p->setFont(f);
-        int tw = fm.horizontalAdvance(ref.name);
-        int pad = 3;
-        int tip = ref.kind == RefInfo::Tag ? h / 2 : 0;
-        QRect box(x + tip, y, tw + 2 * pad, h);
-        QPainterPath path;
-        if (ref.kind == RefInfo::Tag) {
-            QPolygonF poly;
-            poly << QPointF(x, y + h / 2.0) << QPointF(box.left(), y) << QPointF(box.right(), y)
-                 << QPointF(box.right(), y + h) << QPointF(box.left(), y + h);
-            path.addPolygon(poly);
-            path.closeSubpath();
-        } else {
-            path.addRect(box);
-        }
-        QColor bg = ref.kind == RefInfo::LocalBranch ? st.headBgColor
-                    : ref.kind == RefInfo::RemoteBranch ? st.remoteBgColor
-                    : ref.kind == RefInfo::Tag ? st.tagBgColor
-                                               : st.otherRefBgColor;
-        p->setPen(QPen(Qt::black, 1));
-        p->setBrush(bg);
-        p->drawPath(path);
-        if (ref.kind == RefInfo::RemoteBranch) {
-            // "remote/" prefix in the remote colour, branch part in the head colour, like gitk.
-            int slash = ref.name.indexOf(QLatin1Char('/'));
-            if (slash > 0) {
-                int pw = fm.horizontalAdvance(ref.name.left(slash + 1));
-                QRect rest(box.left() + pad + pw, box.top() + 1, box.width() - pad - pw - 1, box.height() - 1);
-                p->fillRect(rest, st.headBgColor);
-            }
-        }
-        p->setPen(Qt::black);
-        p->drawText(box.adjusted(pad, 0, -pad, 0), Qt::AlignVCenter | Qt::AlignLeft, ref.name);
-        rects.append({QRect(x, y, box.right() - x + 1, h), ref});
-        x = box.right() + 4;
+    const RefPillPainter pills(font, line.height() - 4);
+    QList<QPair<QRect, RefInfo>> rects;
+    for (const RefPill &pill : groupRefPills(refs, m_model->refs().headBranch)) {
+        rects += pills.paint(p, pill, x, line.top() + 2);
+        x += pills.width(pill) + 4;
     }
-    p->restore();
     m_labelRects.insert(row, rects);
     return x;
 }
@@ -228,9 +183,11 @@ void GraphDelegate::paint(QPainter *p, const QStyleOptionViewItem &optIn, const 
     x = paintRefs(p, line1, x, row, labelFont);
     if (x != labelsStart) {
         p->save();
-        p->setPen(QPen(st.fgColor, 1));
-        int nx = nodeX(row, cell);
-        p->drawLine(QPointF(nx, nodeY), QPointF(labelsStart, nodeY));
+        p->setRenderHint(QPainter::Antialiasing, true);
+        const auto &cols = st.graphColors;
+        const int lane = row < m_model->graph().rowCount() ? m_model->graph().row(row).nodeColor : 0;
+        p->setPen(QPen(Settings::mix(cols.isEmpty() ? st.fgColor : cols.at(lane % cols.size()), bg, 0.3), 1.5));
+        p->drawLine(QPointF(nodeX(row, cell), nodeY), QPointF(labelsStart, nodeY));
         p->restore();
         x += 4;
     }

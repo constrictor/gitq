@@ -57,10 +57,10 @@ struct Settings {
     QColor diffOldBg = QColor(0xff, 0xf3, 0xf3);
     QColor diffNewBg = QColor(0xf0, 0xff, 0xf0);
     QColor markBgColor = QColor(0xe0, 0xe0, 0xff);
-    QColor headBgColor = QColor(0x00, 0xff, 0x00);
-    QColor remoteBgColor = QColor(0xff, 0xdd, 0xaa);
-    QColor tagBgColor = Qt::yellow;
-    QColor otherRefBgColor = QColor(0xdd, 0xdd, 0xff);
+    QColor headBgColor = QColor(0xcf, 0xf0, 0xd8);       // ref labels: local branches
+    QColor remoteBgColor = QColor(0xff, 0xe3, 0xc4);     // remote branches
+    QColor tagBgColor = QColor(0xff, 0xf0, 0xa8);        // tags
+    QColor otherRefBgColor = QColor(0xdf, 0xe2, 0xff);   // other refs
     QColor fileSepBgColor = QColor(0xaa, 0xaa, 0xaa);
     QColor foundBgColor = Qt::yellow;
     QColor currentSearchBgColor = QColor(0xff, 0xa5, 0x00);

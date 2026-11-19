@@ -73,7 +73,10 @@ Settings Settings::themeDefaults() {
     d.foundBgColor = QColor(0x80, 0x6c, 0x00);
     d.currentSearchBgColor = QColor(0xa8, 0x55, 0x00);
     d.linkColor = QColor(0x6c, 0xa8, 0xff);
-    // Ref labels keep light backgrounds with black text, as in gitk.
+    d.headBgColor = QColor(0x1f, 0x4b, 0x2e);
+    d.remoteBgColor = QColor(0x55, 0x3a, 0x17);
+    d.tagBgColor = QColor(0x52, 0x47, 0x12);
+    d.otherRefBgColor = QColor(0x2f, 0x34, 0x63);
     return d;
 }
 
@@ -81,6 +84,10 @@ Settings Settings::legacyDefaults() {
     Settings d;
     d.graphColors = {QColor(0x00, 0xff, 0x00), Qt::red, Qt::blue, Qt::magenta,
                      Qt::darkGray, QColor(0xa5, 0x2a, 0x2a), QColor(0xff, 0xa5, 0x00)};
+    d.headBgColor = QColor(0x00, 0xff, 0x00);
+    d.remoteBgColor = QColor(0xff, 0xdd, 0xaa);
+    d.tagBgColor = Qt::yellow;
+    d.otherRefBgColor = QColor(0xdd, 0xdd, 0xff);
     return d;
 }
 

@@ -62,6 +62,8 @@ public:
 
 private:
     static Repository wrap(git_repository *r);
+    // Fills in the upstream of a local branch and how far apart they are.
+    void upstreamOf(git_reference *branch, RefInfo &info) const;
 
     RepoPtr m_repo;
     QString m_path;

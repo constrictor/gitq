@@ -38,6 +38,10 @@ struct RefInfo {
     QString name;       // master, origin/master, v1.0
     Oid target;         // direct target (tag object for annotated tags)
     Oid commit;         // peeled commit id
+    // Local branches with an upstream: its short name (origin/master), and how many commits the
+    // branch is ahead of and behind it.
+    QString upstream;
+    int ahead = 0, behind = 0;
 };
 
 } // namespace gitq

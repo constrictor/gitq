@@ -92,6 +92,30 @@ QString Repository::workdir() const {
 
 bool Repository::isBare() const { return git_repository_is_bare(m_repo.get()); }
 
+void Repository::upstreamOf(git_reference *branch, RefInfo &info) const {
+    git_reference *up = nullptr;
+    if (git_branch_upstream(&up, branch) < 0) {
+        git_error_clear();
+        return;
+    }
+    RefPtr guard(up);
+    git_object *peeled = nullptr;
+    if (git_reference_peel(&peeled, up, GIT_OBJECT_COMMIT) < 0) {
+        git_error_clear();
+        return;
+    }
+    const Oid upCommit(git_object_id(peeled));
+    git_object_free(peeled);
+    info.upstream = QString::fromUtf8(git_reference_shorthand(up));
+    size_t ahead = 0, behind = 0;
+    if (upCommit != info.commit &&
+        git_graph_ahead_behind(&ahead, &behind, m_repo.get(), info.commit.ptr(), upCommit.ptr()) == 0) {
+        info.ahead = int(ahead);
+        info.behind = int(behind);
+    }
+    git_error_clear();
+}
+
 RefSet Repository::loadRefs() const {
     RefSet set;
     git_reference_iterator *it = nullptr;
@@ -131,6 +155,7 @@ RefSet Repository::loadRefs() const {
         }
         info.commit = Oid(git_object_id(peeled));
         git_object_free(peeled);
+        if (info.kind == RefInfo::LocalBranch) upstreamOf(ref, info);
         set.refs.append(info);
         set.byCommit.insert(info.commit, int(set.refs.size() - 1));
     }

@@ -4,6 +4,8 @@
 
 #include <QContextMenuEvent>
 #include <QHeaderView>
+#include <QHelpEvent>
+#include <QToolTip>
 
 namespace gitq {
 
@@ -44,6 +46,36 @@ void CommitListView::mousePressEvent(QMouseEvent *e) {
     if (e->button() == Qt::LeftButton && idx.isValid() && idx.column() == 0 && m_delegate &&
         m_delegate->refAt(idx.row(), e->pos(), &ref))
         emit refClicked(idx.row(), ref);
+}
+
+bool CommitListView::viewportEvent(QEvent *e) {
+    if (e->type() == QEvent::ToolTip && m_delegate) {
+        auto *he = static_cast<QHelpEvent *>(e);
+        QModelIndex idx = indexAt(he->pos());
+        RefInfo ref;
+        if (idx.isValid() && idx.column() == 0 && m_delegate->refAt(idx.row(), he->pos(), &ref)) {
+            QString tip;
+            switch (ref.kind) {
+            case RefInfo::LocalBranch: {
+                tip = tr("Branch %1").arg(ref.name);
+                if (!ref.upstream.isEmpty()) {
+                    QStringList parts;
+                    if (ref.ahead > 0) parts << tr("%n commit(s) ahead of", nullptr, ref.ahead);
+                    if (ref.behind > 0) parts << tr("%n commit(s) behind", nullptr, ref.behind);
+                    tip += QLatin1Char('\n') + (parts.isEmpty() ? tr("Up to date with %1").arg(ref.upstream)
+                                                                 : parts.join(tr(" and ")) + QLatin1Char(' ') + ref.upstream);
+                }
+                break;
+            }
+            case RefInfo::RemoteBranch: tip = tr("Remote branch %1").arg(ref.name); break;
+            case RefInfo::Tag: tip = tr("Tag %1").arg(ref.name); break;
+            case RefInfo::Other: tip = ref.fullName; break;
+            }
+            QToolTip::showText(he->globalPos(), tip, viewport());
+            return true;
+        }
+    }
+    return QTreeView::viewportEvent(e);
 }
 
 } // namespace gitq
