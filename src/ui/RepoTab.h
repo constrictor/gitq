@@ -21,6 +21,7 @@
 #include <memory>
 #include <optional>
 
+class QAction;
 class QCheckBox;
 class QComboBox;
 class QLabel;
@@ -183,9 +184,9 @@ private:
     QToolButton *m_backBtn, *m_fwdBtn;
     QLabel *m_rowLabel;
     QProgressBar *m_progress;
-    QToolButton *m_findDownBtn, *m_findUpBtn;
-    QComboBox *m_findType, *m_findMode, *m_findField;
     QLineEdit *m_findEdit;
+    QAction *m_findUp, *m_findDown, *m_findCase, *m_findRegex;
+    Choice *m_findWhat;   // all fields, headline, message, author, committer, paths, -S, -G
     QTimer *m_findTimer;
     QLineEdit *m_searchEdit;
     QToolButton *m_modeDiff, *m_modeOld, *m_modeNew;

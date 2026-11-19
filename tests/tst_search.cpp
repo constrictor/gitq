@@ -31,6 +31,10 @@ private slots:
         s.field = FindSpec::Headline;
         s.text = "^Fix .* parser$";
         QVERIFY(Search::matchesFields(c, s));
+        s.text = "^fix .* PARSER$";
+        QVERIFY(!Search::matchesFields(c, s));
+        s.mode = FindSpec::RegexpIgnoreCase;
+        QVERIFY(Search::matchesFields(c, s));
         QCOMPARE(Search::matchRanges("a parser and parser", {FindSpec::Containing, FindSpec::Exact, FindSpec::AllFields, "parser"}).size(), 2);
     }
 

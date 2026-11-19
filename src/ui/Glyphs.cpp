@@ -81,8 +81,8 @@ void drawGlyph(QPainter *p, Glyph g, const QRectF &box, const QColor &color) {
         p->drawRoundedRect(QRectF(P(0.32, 0.3), P(0.84, 0.86)), side * 0.08, side * 0.08);
         p->drawPolyline(QPolygonF{P(0.18, 0.66), P(0.18, 0.16), P(0.66, 0.16)});
         break;
-    case Glyph::CaseSensitive: text(QStringLiteral("Aa"), true, 0.62); break;
-    case Glyph::Regex: text(QStringLiteral(".*"), true, 0.8); break;
+    case Glyph::CaseSensitive: text(QStringLiteral("Aa"), true, 0.78); break;
+    case Glyph::Regex: text(QStringLiteral(".*"), true, 0.95); break;
     case Glyph::Whitespace:
         p->drawPolyline(QPolygonF{P(0.12, 0.5), P(0.12, 0.72), P(0.88, 0.72), P(0.88, 0.5)});
         p->setBrush(color);

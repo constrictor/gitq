@@ -49,6 +49,10 @@
 
 namespace gitq {
 
+namespace {
+constexpr int kFindPaths = 5;   // "touching paths" in the find bar's choice
+}
+
 RepoTab::RepoTab(Repository repo, const QStringList &args, const QString &prefix, QWidget *parent)
     : QWidget(parent), m_repo(std::move(repo)), m_args(args), m_prefix(prefix) {
     m_repoPath = m_repo.path();
@@ -188,35 +192,88 @@ void RepoTab::buildUi() {
     bar->addWidget(m_progress);
     tl->addLayout(bar);
 
+    // Find bar: one field, with match-case and regex toggles and previous / next arrows inside it,
+    // and a chip choosing what to search.
     auto *fbar = new QHBoxLayout;
-    fbar->addWidget(new QLabel(tr("Find")));
-    m_findDownBtn = new QToolButton;
-    m_findDownBtn->setArrowType(Qt::DownArrow);
-    m_findDownBtn->setToolTip(tr("Find next (older)"));
-    m_findUpBtn = new QToolButton;
-    m_findUpBtn->setArrowType(Qt::UpArrow);
-    m_findUpBtn->setToolTip(tr("Find previous (newer)"));
-    fbar->addWidget(m_findDownBtn);
-    fbar->addWidget(m_findUpBtn);
-    fbar->addWidget(new QLabel(tr("commit")));
-    m_findType = new QComboBox;
-    m_findType->setObjectName(QStringLiteral("findType"));
-    m_findType->addItems({tr("containing:"), tr("touching paths:"), tr("adding/removing string:"),
-                          tr("changing lines matching:")});
-    fbar->addWidget(m_findType);
+    fbar->setSpacing(4);
     m_findEdit = new QLineEdit;
     m_findEdit->setObjectName(QStringLiteral("findEdit"));
     m_findEdit->setClearButtonEnabled(true);
+    m_findEdit->addAction(glyphIcon(Glyph::Search), QLineEdit::LeadingPosition);
+    // Trailing actions are placed right to left.
+    m_findDown = m_findEdit->addAction(glyphIcon(Glyph::ArrowDown), QLineEdit::TrailingPosition);
+    m_findDown->setToolTip(tr("Find next, older (Return)"));
+    m_findUp = m_findEdit->addAction(glyphIcon(Glyph::ArrowUp), QLineEdit::TrailingPosition);
+    m_findUp->setToolTip(tr("Find previous, newer (Shift-Up, ?)"));
+    m_findRegex = m_findEdit->addAction(QIcon(), QLineEdit::TrailingPosition);
+    m_findRegex->setObjectName(QStringLiteral("findRegex"));
+    m_findRegex->setCheckable(true);
+    m_findRegex->setToolTip(tr("Regular expression"));
+    m_findCase = m_findEdit->addAction(QIcon(), QLineEdit::TrailingPosition);
+    m_findCase->setObjectName(QStringLiteral("findCase"));
+    m_findCase->setCheckable(true);
+    m_findCase->setChecked(true);   // gitk's default mode, "Exact"
+    m_findCase->setToolTip(tr("Match case"));
     fbar->addWidget(m_findEdit, 1);
-    m_findMode = new QComboBox;
-    m_findMode->setObjectName(QStringLiteral("findMode"));
-    m_findMode->addItems({tr("Exact"), tr("IgnCase"), tr("Regexp")});
-    fbar->addWidget(m_findMode);
-    m_findField = new QComboBox;
-    m_findField->setObjectName(QStringLiteral("findField"));
-    m_findField->addItems({tr("All fields"), tr("Headline"), tr("Comments"), tr("Author"), tr("Committer")});
-    fbar->addWidget(m_findField);
+
+    m_findWhat = new Choice({tr("All fields"), tr("Headline"), tr("Message"), tr("Author"), tr("Committer"),
+                             tr("Touching paths"), tr("Adding/removing string"), tr("Changing lines matching")},
+                            0, this);
+    m_findWhat->setObjectName(QStringLiteral("findWhat"));
+    auto *whatBtn = new QToolButton;
+    whatBtn->setObjectName(QStringLiteral("findWhatButton"));
+    whatBtn->setPopupMode(QToolButton::InstantPopup);
+    whatBtn->setToolTip(tr("What to search"));
+    // A rounded "chip" rather than a button.
+    whatBtn->setStyleSheet(QStringLiteral("QToolButton { border: 1px solid palette(mid); border-radius: 9px;"
+                                          " padding: 2px 16px 2px 8px; background: palette(base); }"
+                                          "QToolButton:hover { border-color: palette(highlight); }"
+                                          "QToolButton::menu-indicator { subcontrol-position: right center;"
+                                          " subcontrol-origin: padding; right: 4px; }"));
+    auto *whatMenu = new QMenu(whatBtn);
+    const QList<QAction *> what = m_findWhat->actions();
+    whatMenu->addSection(tr("Commits whose text matches, in"));
+    whatMenu->addActions(what.mid(0, 5));
+    whatMenu->addSection(tr("Commits whose changes"));
+    what[5]->setText(tr("Touch paths"));
+    what[6]->setText(tr("Add or remove the string (-S)"));
+    what[7]->setText(tr("Change lines matching (-G)"));
+    whatMenu->addActions(what.mid(5));
+    whatBtn->setMenu(whatMenu);
+    fbar->addWidget(whatBtn);
     tl->addLayout(fbar);
+
+    // The chip shows the current choice; the toggles show their state by colour (line edit
+    // actions have no checked look of their own).
+    auto updateFindChrome = [this, whatBtn] {
+        static const char *const chips[] = {QT_TR_NOOP("in: all fields"), QT_TR_NOOP("in: headline"),
+                                            QT_TR_NOOP("in: message"), QT_TR_NOOP("in: author"),
+                                            QT_TR_NOOP("in: committer"), QT_TR_NOOP("paths"),
+                                            QT_TR_NOOP("-S string"), QT_TR_NOOP("-G regex")};
+        static const char *const hints[] = {QT_TR_NOOP("Find commits"), QT_TR_NOOP("Find commits by headline"),
+                                            QT_TR_NOOP("Find commits by message"), QT_TR_NOOP("Find commits by author"),
+                                            QT_TR_NOOP("Find commits by committer"),
+                                            QT_TR_NOOP("Find commits touching paths (space separated)"),
+                                            QT_TR_NOOP("Find commits adding or removing a string"),
+                                            QT_TR_NOOP("Find commits changing lines matching")};
+        const int i = qBound(0, m_findWhat->currentIndex(), 7);
+        whatBtn->setText(tr(chips[i]));
+        m_findEdit->setPlaceholderText(tr(hints[i]));
+        const bool text = i != kFindPaths;   // paths are matched as pathspecs
+        m_findCase->setVisible(text);
+        m_findRegex->setVisible(text);
+        const QPalette pal = palette();
+        auto tint = [&](QAction *a, Glyph g) {
+            a->setIcon(glyphIcon(g, a->isChecked() ? pal.color(QPalette::Highlight)
+                                                   : Settings::mix(pal.color(QPalette::Text), pal.color(QPalette::Base), 0.55)));
+        };
+        tint(m_findCase, Glyph::CaseSensitive);
+        tint(m_findRegex, Glyph::Regex);
+    };
+    updateFindChrome();
+    connect(m_findWhat, &Choice::currentIndexChanged, this, updateFindChrome);
+    connect(m_findCase, &QAction::toggled, this, updateFindChrome);
+    connect(m_findRegex, &QAction::toggled, this, updateFindChrome);
 
     // --- diff pane: one compact tool bar above the diff
     m_diffPane = new QWidget;
@@ -359,15 +416,12 @@ void RepoTab::buildUi() {
     m_findTimer->setInterval(300);
     connect(m_findTimer, &QTimer::timeout, this, &RepoTab::runFind);
     connect(m_findEdit, &QLineEdit::textChanged, this, &RepoTab::findChanged);
-    connect(m_findType, &QComboBox::currentIndexChanged, this, [this](int i) {
-        m_findField->setEnabled(i == 0);
-        findChanged();
-    });
-    connect(m_findMode, &QComboBox::currentIndexChanged, this, &RepoTab::findChanged);
-    connect(m_findField, &QComboBox::currentIndexChanged, this, &RepoTab::findChanged);
+    connect(m_findWhat, &Choice::currentIndexChanged, this, &RepoTab::findChanged);
+    connect(m_findCase, &QAction::toggled, this, &RepoTab::findChanged);
+    connect(m_findRegex, &QAction::toggled, this, &RepoTab::findChanged);
     connect(m_findEdit, &QLineEdit::returnPressed, this, [this] { findNext(1); });
-    connect(m_findDownBtn, &QToolButton::clicked, this, [this] { findNext(1); });
-    connect(m_findUpBtn, &QToolButton::clicked, this, [this] { findNext(-1); });
+    connect(m_findDown, &QAction::triggered, this, [this] { findNext(1); });
+    connect(m_findUp, &QAction::triggered, this, [this] { findNext(-1); });
 
     connect(searchNext, &QAction::triggered, this, [this] { m_diff->searchNext(false); });
     connect(searchPrev, &QAction::triggered, this, [this] { m_diff->searchNext(true); });
@@ -879,9 +933,12 @@ void RepoTab::gotoCommitFromField() {
 
 FindSpec RepoTab::currentFindSpec() const {
     FindSpec s;
-    s.type = FindSpec::Type(m_findType->currentIndex());
-    s.mode = FindSpec::Mode(m_findMode->currentIndex());
-    s.field = FindSpec::Field(m_findField->currentIndex());
+    const int what = m_findWhat->currentIndex();
+    s.type = what < 5 ? FindSpec::Containing : FindSpec::Type(what - 4);
+    s.field = what < 5 ? FindSpec::Field(what) : FindSpec::AllFields;
+    const bool matchCase = m_findCase->isChecked();
+    s.mode = m_findRegex->isChecked() ? (matchCase ? FindSpec::Regexp : FindSpec::RegexpIgnoreCase)
+                                      : (matchCase ? FindSpec::Exact : FindSpec::IgnoreCase);
     s.text = m_findEdit->text();
     return s;
 }
@@ -1057,10 +1114,10 @@ void RepoTab::fileMenu(const QPoint &pos) {
     if (path.isEmpty()) return;
     QMenu menu(this);
     auto highlight = [this, path](bool only) {
-        QString text = only ? path : (m_findType->currentIndex() == 1 && !m_findEdit->text().isEmpty()
+        QString text = only ? path : (m_findWhat->currentIndex() == kFindPaths && !m_findEdit->text().isEmpty()
                                           ? m_findEdit->text() + QLatin1Char(' ') + path
                                           : path);
-        m_findType->setCurrentIndex(1);
+        m_findWhat->setCurrentIndex(kFindPaths);
         m_findEdit->setText(text);
         runFind();
     };

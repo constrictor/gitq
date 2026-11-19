@@ -58,9 +58,10 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
   the row under the mouse is highlighted; streaming load; long edges elided with arrows like gitk; local
   uncommitted / staged changes rows.
 - SHA1 field (goto by id prefix, ref name or any revision), back/forward history, row counter.
-- Find bar: *containing* (all fields / headline / comments / author / committer), *touching paths*,
-  *adding/removing string* (`-S`), *changing lines matching* (`-G`); Exact / IgnCase / Regexp;
-  matches are bold, Return / Shift-Up / Shift-Down / `?` move between them.
+- Find bar: one search field with match-case (Aa) and regex (.*) toggles and previous / next arrows, and
+  a chip choosing what to search: text in all fields / headline / message / author / committer,
+  *touching paths*, *adding/removing string* (`-S`), *changing lines matching* (`-G`); matches are
+  bold, Return / Shift-Up / Shift-Down / `?` move between them.
 - Details pane: author/committer, tags, clickable Parent/Child links, Branches / Follows / Precedes
   (computed in the background), message, diff. Merges show a combined (`--cc`) diff.
 - Diff tool bar in one compact row: Diff / Old / New version, lines of context, ignore space change,

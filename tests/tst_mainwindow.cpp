@@ -127,7 +127,7 @@ private slots:
         QMetaObject::invokeMethod(find, "returnPressed");
         QTRY_COMPARE(child<QLineEdit>(&w, "shaEdit")->text(), mergeId);
 
-        child<QComboBox>(&w, "findType")->setCurrentIndex(1);   // touching paths
+        child<Choice>(&w, "findWhat")->setCurrentIndex(5);   // touching paths
         find->setText(QStringLiteral("src/feature.c"));
         QTRY_COMPARE(model(&w)->highlighted().size(), 1);
         shot(&w, QStringLiteral("03-find"));

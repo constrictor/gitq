@@ -15,7 +15,7 @@ class Repository;
 
 struct FindSpec {
     enum Type { Containing, TouchingPaths, AddingRemoving, ChangingLines };
-    enum Mode { Exact, IgnoreCase, Regexp };
+    enum Mode { Exact, IgnoreCase, Regexp, RegexpIgnoreCase };
     enum Field { AllFields, Headline, Comments, Author, Committer };
 
     Type type = Containing;

@@ -11,9 +11,10 @@ namespace gitq {
 namespace Search {
 
 QRegularExpression regexFor(const FindSpec &spec) {
-    QString pattern = spec.mode == FindSpec::Regexp ? spec.text : QRegularExpression::escape(spec.text);
-    auto opts = spec.mode == FindSpec::Exact ? QRegularExpression::NoPatternOption
-                                             : QRegularExpression::CaseInsensitiveOption;
+    const bool regex = spec.mode == FindSpec::Regexp || spec.mode == FindSpec::RegexpIgnoreCase;
+    const bool icase = spec.mode == FindSpec::IgnoreCase || spec.mode == FindSpec::RegexpIgnoreCase;
+    QString pattern = regex ? spec.text : QRegularExpression::escape(spec.text);
+    auto opts = icase ? QRegularExpression::CaseInsensitiveOption : QRegularExpression::NoPatternOption;
     return QRegularExpression(pattern, opts);
 }
 
