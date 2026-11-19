@@ -12,6 +12,8 @@
 #include "ui/ViewDialog.h"
 
 #include <QApplication>
+#include <QClipboard>
+#include <QTextBlock>
 #include <QComboBox>
 #include <QFileInfo>
 #include <QHeaderView>
@@ -61,7 +63,7 @@ class TestMainWindow : public QObject {
         auto *sha = child<QLineEdit>(w, "shaEdit");
         sha->setText(id);
         QMetaObject::invokeMethod(sha, "returnPressed");
-        QTRY_VERIFY(diffText(w).contains(QStringLiteral("----------")) || diffText(w).contains(QStringLiteral("Author:")));
+        QTRY_VERIFY(diffText(w).contains(QStringLiteral("----------")) || diffText(w).contains(QStringLiteral("Parent: ")));
     }
 
 private slots:
@@ -97,11 +99,27 @@ private slots:
         waitLoaded(&w);
         QCOMPARE(model(&w)->rowCount(), 5);
         QCOMPARE(child<QLineEdit>(&w, "shaEdit")->text(), repo->rev("HEAD"));
-        QVERIFY(diffText(&w).contains(QStringLiteral("Author: Tester <tester@example.com>")));
+        QVERIFY(diffText(&w).contains(QStringLiteral("Tester <tester@example.com>")));
+        QVERIFY(diffText(&w).contains(QStringLiteral("After merge")));   // the subject heading
         QVERIFY(diffText(&w).contains(QStringLiteral("---------- README ----------")));
         QTRY_VERIFY(diffText(&w).contains(QStringLiteral("Branches: master")));
         QVERIFY(child<QLabel>(&w, "rowLabel")->text().contains(QStringLiteral("1 / 5")));
         shot(&w, QStringLiteral("01-head"));
+
+        // Clicking the id chip in the header copies the commit id.
+        auto *diff = child<DiffView>(&w, "diffView");
+        QTextCursor chip;
+        for (QTextBlock b = diff->document()->begin(); b.isValid() && chip.isNull(); b = b.next())
+            for (auto it = b.begin(); !it.atEnd(); ++it)
+                if (it.fragment().charFormat().anchorHref().startsWith(QStringLiteral("copy:"))) {
+                    chip = QTextCursor(diff->document());
+                    chip.setPosition(it.fragment().position());
+                    break;
+                }
+        QVERIFY(!chip.isNull());
+        QApplication::clipboard()->clear();
+        QTest::mouseClick(diff->viewport(), Qt::LeftButton, {}, diff->cursorRect(chip).center() + QPoint(6, 0));
+        QCOMPARE(QApplication::clipboard()->text(), repo->rev("HEAD"));
     }
 
     void mergeShowsCombinedDiff() {
@@ -278,7 +296,7 @@ private slots:
         list->setCurrentIndex(model(&w)->index(0, 0));
         QTRY_VERIFY(diffText(&w).contains(QStringLiteral("---------- README ----------")));
         QVERIFY(diffText(&w).contains(QStringLiteral("+edited in work tree")));
-        QVERIFY(diffText(&w).startsWith(QStringLiteral("Local uncommitted changes")));
+        QVERIFY(diffText(&w).trimmed().startsWith(QStringLiteral("Local uncommitted changes")));
         repo->git({"checkout", "--", "README"});
     }
 

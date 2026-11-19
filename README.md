@@ -62,8 +62,10 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
   a chip choosing what to search: text in all fields / headline / message / author / committer,
   *touching paths*, *adding/removing string* (`-S`), *changing lines matching* (`-G`); matches are
   bold, Return / Shift-Up / Shift-Down / `?` move between them.
-- Details pane: author/committer, tags, clickable Parent/Child links, Branches / Follows / Precedes
-  (computed in the background), message, diff. Merges show a combined (`--cc`) diff.
+- Details pane: a header card with the author's initials in a coloured circle, the subject as a heading,
+  author and committer with relative and exact dates, the commit id (click to copy), the commit's ref
+  labels, clickable Parent/Child links and Branches / Follows / Precedes (computed in the background);
+  then the message and the diff. Merges show a combined (`--cc`) diff.
 - Diff tool bar in one compact row: Diff / Old / New version, lines of context, ignore space change,
   line / markup words / color words, diff search (finds as you type; arrows or Ctrl-R / Ctrl-S for the
   previous / next match); the ⋯ menu wraps long lines and chooses how submodule changes are shown.

@@ -1,8 +1,17 @@
 #include "ui/DiffView.h"
 
 #include "Settings.h"
+#include "model/CommitModel.h"
+#include "ui/Glyphs.h"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QContextMenuEvent>
+#include <QHelpEvent>
+#include <QPainter>
+#include <QPlainTextDocumentLayout>
+#include <QTextObjectInterface>
+#include <QToolTip>
 #include <QDateTime>
 #include <QRegularExpression>
 #include <QScrollBar>
@@ -27,6 +36,124 @@ const QRegularExpression &hunkRe() {
 }
 
 } // namespace
+
+namespace {
+
+enum ObjectKind { SpacerObject = 1, PillObject, IdChipObject };
+constexpr int kObjectType = QTextFormat::UserObject + 1;
+constexpr int kKindProp = QTextFormat::UserProperty + 1;
+constexpr int kIndexProp = QTextFormat::UserProperty + 2;
+
+// Initials of a name: first letters of the first and last words.
+QString initials(const QString &name) {
+    const QStringList words = name.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    if (words.isEmpty()) return QStringLiteral("?");
+    QString s = words.first().left(1);
+    if (words.size() > 1) s += words.last().left(1);
+    return s.toUpper();
+}
+
+// A stable, pleasant colour per person.
+QColor avatarColor(const QString &key) {
+    const uint h = qHash(key.toLower());
+    return QColor::fromHsl(int(h % 360), 120 + int((h >> 9) % 60), Settings::darkTheme() ? 95 : 110);
+}
+
+// Plain-text document layout whose inline objects are centred on the text line instead of standing
+// on the baseline.
+class CenteredObjectLayout : public QPlainTextDocumentLayout {
+public:
+    using QPlainTextDocumentLayout::QPlainTextDocumentLayout;
+
+protected:
+    void resizeInlineObject(QTextInlineObject item, int posInDocument, const QTextFormat &format) override {
+        QPlainTextDocumentLayout::resizeInlineObject(item, posInDocument, format);
+        const QFontMetricsF fm(format.toCharFormat().font());
+        const qreal h = item.height();
+        const qreal ascent = (h + fm.ascent() - fm.descent()) / 2;
+        item.setAscent(ascent);
+        item.setDescent(h - ascent);
+    }
+};
+
+} // namespace
+
+// Draws the card's inline objects: the indent past the avatar, ref labels and the id chip.
+class HeaderObjects : public QObject, public QTextObjectInterface {
+    Q_OBJECT
+    Q_INTERFACES(QTextObjectInterface)
+public:
+    explicit HeaderObjects(DiffView *view) : QObject(view), m_view(view) {}
+
+    static int indent(const QFont &font) { return int(QFontMetrics(font).height() * 2.6) + 18; }
+
+    QSizeF intrinsicSize(QTextDocument *, int, const QTextFormat &format) override {
+        const QFont font = format.toCharFormat().font();
+        const QFontMetrics fm(font);
+        const int h = fm.height() + 4;
+        switch (format.intProperty(kKindProp)) {
+        case SpacerObject: return QSizeF(indent(Settings::instance().uiFont), 1);
+        case PillObject: {
+            const int i = format.intProperty(kIndexProp);
+            if (i < 0 || i >= m_view->m_cardPills.size()) return {};
+            return QSizeF(RefPillPainter(font, h).width(m_view->m_cardPills[i]) + 4, h);
+        }
+        case IdChipObject: return QSizeF(chipWidth(font), h);
+        }
+        return {};
+    }
+
+    void drawObject(QPainter *p, const QRectF &rect, QTextDocument *, int, const QTextFormat &format) override {
+        const QFont font = format.toCharFormat().font();
+        const int h = int(rect.height());
+        switch (format.intProperty(kKindProp)) {
+        case PillObject: {
+            const int i = format.intProperty(kIndexProp);
+            if (i >= 0 && i < m_view->m_cardPills.size())
+                RefPillPainter(font, h).paint(p, m_view->m_cardPills[i], int(rect.left()), int(rect.top()));
+            break;
+        }
+        case IdChipObject: {
+            const Settings &st = Settings::instance();
+            const QColor fg = st.fgColor, bg = Settings::mix(st.bgColor, st.fgColor, 0.08);
+            p->save();
+            p->setRenderHint(QPainter::Antialiasing, true);
+            const QRectF box = rect.adjusted(0.5, 0.5, -0.5, -0.5);
+            p->setPen(QPen(Settings::mix(bg, fg, 0.25), 1));
+            p->setBrush(bg);
+            p->drawRoundedRect(box, h * 0.3, h * 0.3);
+            const QFont mono = chipFont(font);
+            const int pad = h / 3;
+            p->setFont(mono);
+            p->setPen(fg);
+            const QString id = m_view->m_cardId.left(10);
+            const int tw = QFontMetrics(mono).horizontalAdvance(id);
+            p->drawText(QRectF(rect.left() + pad, rect.top(), tw + 1, h), Qt::AlignVCenter | Qt::AlignLeft, id);
+            const double icon = h * 0.6;
+            drawGlyph(p, Glyph::Copy, QRectF(rect.left() + pad + tw + pad * 0.7, rect.top() + (h - icon) / 2, icon, icon),
+                      Settings::mix(fg, bg, 0.35));
+            p->restore();
+            break;
+        }
+        default: break;
+        }
+    }
+
+private:
+    QFont chipFont(const QFont &font) const {
+        QFont mono = Settings::instance().textFont;
+        mono.setPointSizeF(font.pointSizeF() > 0 ? font.pointSizeF() * 0.95 : mono.pointSizeF());
+        return mono;
+    }
+    int chipWidth(const QFont &font) const {
+        const int h = QFontMetrics(font).height() + 4;
+        const int pad = h / 3;
+        return pad + QFontMetrics(chipFont(font)).horizontalAdvance(m_view->m_cardId.left(10)) + int(pad * 0.7) +
+               int(h * 0.6) + pad;
+    }
+
+    DiffView *m_view;
+};
 
 // Colours body lines from the per-block styles recorded while rendering.
 class DiffHighlighter : public QSyntaxHighlighter {
@@ -67,6 +194,8 @@ private:
 };
 
 DiffView::DiffView(QWidget *parent) : QPlainTextEdit(parent) {
+    document()->setDocumentLayout(new CenteredObjectLayout(document()));
+    document()->documentLayout()->registerHandler(kObjectType, new HeaderObjects(this));
     new DiffHighlighter(this);
     setReadOnly(true);
     setUndoRedoEnabled(false);
@@ -95,6 +224,10 @@ void DiffView::clearAll() {
     m_pending.clear();
     m_fileStarts.clear();
     m_headerEnd = 0;
+    m_cardEnd = 0;
+    m_avatarText.clear();
+    m_cardPills.clear();
+    m_cardId.clear();
     m_nearbyBlock = -1;
     m_lastTopFile.clear();
     m_currentSearchHit = QTextCursor();
@@ -125,44 +258,118 @@ void DiffView::appendLinkTo(QTextCursor &cur, const QString &label, const QStrin
     cur.insertText(label, f);
 }
 
-void DiffView::showHeader(const CommitInfo &c, const QList<RefInfo> &refs, const QList<Link> &parents,
-                          const QList<Link> &children, const QString &dateFormat) {
-    clearAll();
-    const QTextCharFormat plain = plainFormat();
-    auto date = [&](const Person &p) { return QDateTime::fromSecsSinceEpoch(p.time).toString(dateFormat); };
-
-    if (c.id.isPseudo()) {
-        appendLine(c.subject, plain);
-    } else {
-        appendLine(QStringLiteral("Author: %1  %2").arg(c.author.nameEmail(), date(c.author)), plain);
-        appendLine(QStringLiteral("Committer: %1  %2").arg(c.committer.nameEmail(), date(c.committer)), plain);
+QTextCharFormat DiffView::cardFormat(double scale, bool bold, bool dim) const {
+    const Settings &st = Settings::instance();
+    QTextCharFormat f;
+    QFont font = st.uiFont;
+    if (scale != 1.0) {
+        if (font.pointSizeF() > 0) font.setPointSizeF(font.pointSizeF() * scale);
+        else font.setPixelSize(int(font.pixelSize() * scale));
     }
-    QStringList tags;
-    for (const RefInfo &r : refs)
-        if (r.kind == RefInfo::Tag) tags << r.name;
-    if (!tags.isEmpty()) appendLine(QStringLiteral("Tags: ") + tags.join(QStringLiteral(", ")), plain);
+    font.setBold(bold);
+    f.setFont(font);
+    f.setForeground(dim ? Settings::mix(st.fgColor, st.bgColor, 0.4) : st.fgColor);
+    return f;
+}
+
+void DiffView::insertObject(QTextCursor &cur, int kind, int index, const QString &href) {
+    QTextCharFormat f = cardFormat();
+    f.setObjectType(kObjectType);
+    f.setProperty(kKindProp, kind);
+    f.setProperty(kIndexProp, index);
+    if (!href.isEmpty()) {
+        f.setAnchor(true);
+        f.setAnchorHref(href);
+    }
+    cur.insertText(QString(QChar::ObjectReplacementCharacter), f);
+}
+
+QTextCursor DiffView::appendCardLine(const QTextCharFormat &fmt, bool indent) {
+    appendLine(QString(), fmt);
+    QTextCursor cur(document());
+    cur.movePosition(QTextCursor::End);
+    cur.setBlockCharFormat(fmt);
+    if (indent && !m_avatarText.isEmpty()) insertObject(cur, SpacerObject, 0);
+    cur.setCharFormat(fmt);
+    return cur;
+}
+
+void DiffView::showHeader(const CommitInfo &c, const QList<RefInfo> &refs, const QString &headBranch,
+                          const QList<Link> &parents, const QList<Link> &children, const QString &dateFormat) {
+    clearAll();
+    const QTextCharFormat plain = plainFormat(), text = cardFormat(), dim = cardFormat(1.0, false, true);
+    auto date = [&](const Person &p) {
+        const QString abs = QDateTime::fromSecsSinceEpoch(p.time).toString(dateFormat);
+        const QString rel = CommitModel::relativeTime(p.time, QDateTime::currentSecsSinceEpoch());
+        return rel.isEmpty() ? abs : QStringLiteral("%1 (%2)").arg(rel, abs);
+    };
+
+    if (!c.id.isPseudo()) {
+        m_avatarText = initials(c.author.name);
+        m_avatarColor = avatarColor(c.author.email.isEmpty() ? c.author.name : c.author.email);
+        m_cardId = c.id.hex();
+    }
+    // A thin first line pads the top of the card.
+    QTextCharFormat pad = cardFormat(0.45);
+    appendCardLine(pad, false);
+
+    QTextCursor cur = appendCardLine(cardFormat(1.3, true));
+    cur.insertText(c.subject);
+    if (!c.id.isPseudo()) {
+        cur = appendCardLine(text);
+        cur.insertText(c.author.name, text);
+        if (!c.author.email.isEmpty()) cur.insertText(QStringLiteral(" <%1>").arg(c.author.email), dim);
+        cur.insertText(QStringLiteral("  ·  ") + date(c.author), dim);
+        const bool sameCommitter = c.committer.name == c.author.name && c.committer.email == c.author.email;
+        if (!sameCommitter || qAbs(c.committer.time - c.author.time) > 60) {
+            cur = appendCardLine(dim);
+            cur.insertText(tr("Committed by "), dim);
+            cur.insertText(sameCommitter ? tr("the author") : c.committer.nameEmail(), text);
+            cur.insertText(QStringLiteral("  ·  ") + date(c.committer), dim);
+        }
+
+        // Commit id chip (click to copy) and ref labels.
+        cur = appendCardLine(text);
+        insertObject(cur, IdChipObject, 0, QStringLiteral("copy:") + c.id.hex());
+        m_cardPills = groupRefPills(refs, headBranch);
+        for (int i = 0; i < m_cardPills.size(); ++i) {
+            cur.insertText(QStringLiteral(" "), text);
+            insertObject(cur, PillObject, i);
+        }
+    }
 
     auto linkLines = [&](const QString &label, const QList<Link> &links) {
         for (const Link &l : links) {
-            appendLine(label, plain);
-            QTextCursor cur(document());
-            cur.movePosition(QTextCursor::End);
-            appendLink(cur, l.first.isPseudo() ? (l.first.isWorkdir() ? tr("Local uncommitted changes")
-                                                                      : tr("Local changes in index"))
-                                               : l.first.hex(),
-                       l.first);
-            if (!l.second.isEmpty()) cur.insertText(QStringLiteral(" (%1)").arg(l.second), plain);
+            QTextCursor lc = appendCardLine(text);
+            lc.insertText(label, dim);
+            QTextCharFormat linkFmt = text;
+            linkFmt.setForeground(Settings::instance().linkColor);
+            linkFmt.setFontUnderline(true);
+            linkFmt.setAnchor(true);
+            linkFmt.setAnchorHref(QStringLiteral("commit:") + l.first.hex());
+            lc.insertText(l.first.isPseudo() ? (l.first.isWorkdir() ? tr("Local uncommitted changes")
+                                                                    : tr("Local changes in index"))
+                                             : l.first.shortHex(10),
+                          linkFmt);
+            if (!l.second.isEmpty()) lc.insertText(QStringLiteral("  ") + l.second, text);
         }
     };
     linkLines(tr("Parent: "), parents);
-    linkLines(tr("Child:  "), children);
+    linkLines(tr("Child: "), children);
     m_nearbyBlock = int(m_meta.size());
+    appendCardLine(pad, false);
+    m_cardEnd = int(m_meta.size());
 
+    // The message after the subject line, indented like git log does.
     if (!c.id.isPseudo()) {
-        appendLine(QString(), plain);
-        QString msg = c.message();
-        while (msg.endsWith(QLatin1Char('\n'))) msg.chop(1);
-        for (const QString &line : msg.split(QLatin1Char('\n'))) appendLine(QStringLiteral("    ") + line, plain);
+        QStringList body = c.message().split(QLatin1Char('\n'));
+        body.removeFirst();
+        while (!body.isEmpty() && body.first().trimmed().isEmpty()) body.removeFirst();
+        while (!body.isEmpty() && body.last().trimmed().isEmpty()) body.removeLast();
+        if (!body.isEmpty()) {
+            appendLine(QString(), plain);
+            for (const QString &line : body) appendLine(QStringLiteral("    ") + line, plain);
+        }
     }
     appendLine(QString(), plain);
     m_headerEnd = int(m_meta.size());
@@ -172,20 +379,24 @@ void DiffView::showHeader(const CommitInfo &c, const QList<RefInfo> &refs, const
 
 void DiffView::showRangeHeader(const QString &text) {
     clearAll();
-    appendLine(text, plainFormat());
+    const QTextCharFormat pad = cardFormat(0.45), fmt = plainFormat();
+    appendCardLine(pad, false);
+    for (const QString &line : text.split(QLatin1Char('\n'))) appendCardLine(fmt, false).insertText(line, fmt);
+    appendCardLine(pad, false);
+    m_cardEnd = int(m_meta.size());
     appendLine(QString(), plainFormat());
     m_headerEnd = int(m_meta.size());
 }
 
 void DiffView::showNearby(const NearbyRefs &n, int maxRefs) {
     if (m_nearbyBlock < 0) return;
-    QStringList lines;
+    QList<QPair<QString, QString>> lines;
     auto fmt = [&](const QString &label, const QStringList &names) {
         if (names.isEmpty()) return;
         QStringList shown = names.mid(0, maxRefs);
-        QString s = label + shown.join(QStringLiteral(", "));
+        QString s = shown.join(QStringLiteral(", "));
         if (names.size() > maxRefs) s += QStringLiteral(", ...");
-        lines << s;
+        lines.append({label, s});
     };
     fmt(tr("Branches: "), n.branches);
     fmt(tr("Follows: "), n.follows);
@@ -198,9 +409,12 @@ void DiffView::showNearby(const NearbyRefs &n, int maxRefs) {
     QTextCursor cur(block);
     cur.movePosition(QTextCursor::EndOfBlock);
     const int keep = verticalScrollBar()->value();
-    for (const QString &l : lines) {
-        cur.insertBlock(QTextBlockFormat());
-        cur.insertText(l, plainFormat());
+    const QTextCharFormat text = cardFormat(), dim = cardFormat(1.0, false, true);
+    for (const auto &l : lines) {
+        cur.insertBlock(QTextBlockFormat(), text);
+        if (!m_avatarText.isEmpty()) insertObject(cur, SpacerObject, 0);
+        cur.insertText(l.first, dim);
+        cur.insertText(l.second, text);
     }
     const int k = int(lines.size());
     for (int i = 0; i < k; ++i) {
@@ -214,9 +428,68 @@ void DiffView::showNearby(const NearbyRefs &n, int maxRefs) {
     for (auto it = m_fileStarts.cbegin(); it != m_fileStarts.cend(); ++it) shifted.insert(it.key() + k, it.value());
     m_fileStarts = shifted;
     m_headerEnd += k;
+    m_cardEnd += k;
     m_nearbyBlock = -1;
     verticalScrollBar()->setValue(keep);
     updateExtraSelections();
+}
+
+void DiffView::paintEvent(QPaintEvent *e) {
+    const Settings &st = Settings::instance();
+    {
+        // The header card's background, under the text.
+        QPainter p(viewport());
+        const QPointF offset = contentOffset();
+        const QColor cardBg = Settings::mix(st.bgColor, st.fgColor, Settings::darkTheme() ? 0.06 : 0.035);
+        for (QTextBlock b = firstVisibleBlock(); b.isValid() && b.blockNumber() < m_cardEnd; b = b.next()) {
+            const QRectF r = blockBoundingGeometry(b).translated(offset);
+            if (r.top() > e->rect().bottom()) break;
+            p.fillRect(QRectF(0, r.top(), viewport()->width(), r.height()), cardBg);
+            if (b.blockNumber() == m_cardEnd - 1) {
+                p.setPen(Settings::mix(cardBg, st.fgColor, 0.15));
+                p.drawLine(QPointF(0, r.bottom() - 0.5), QPointF(viewport()->width(), r.bottom() - 0.5));
+            }
+        }
+    }
+    QPlainTextEdit::paintEvent(e);
+    if (m_avatarText.isEmpty() || m_cardEnd < 3) return;
+    // The avatar: the author's initials in a circle beside the subject and author lines.
+    const QTextBlock subject = document()->findBlockByNumber(1), author = document()->findBlockByNumber(2);
+    if (!subject.isValid() || !author.isValid()) return;
+    const QPointF offset = contentOffset();
+    const QRectF r1 = blockBoundingGeometry(subject).translated(offset), r2 = blockBoundingGeometry(author).translated(offset);
+    const double top = r1.top(), bottom = r2.bottom();
+    const double d = qMin(bottom - top, HeaderObjects::indent(st.uiFont) - 18.0);
+    const QRectF circle(document()->documentMargin() + 8, (top + bottom - d) / 2, d, d);
+    if (circle.bottom() < 0) return;
+    QPainter p(viewport());
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(Qt::NoPen);
+    p.setBrush(m_avatarColor);
+    p.drawEllipse(circle);
+    QFont f = st.uiFont;
+    f.setBold(true);
+    f.setPixelSize(qMax(8, int(d * 0.4)));
+    p.setFont(f);
+    p.setPen(Qt::white);
+    p.drawText(circle, Qt::AlignCenter, m_avatarText);
+}
+
+bool DiffView::viewportEvent(QEvent *e) {
+    if (e->type() == QEvent::ToolTip) {
+        auto *he = static_cast<QHelpEvent *>(e);
+        const QString href = anchorAt(he->pos());
+        if (href.startsWith(QLatin1String("copy:"))) {
+            QToolTip::showText(he->globalPos(), tr("Copy the commit ID %1").arg(href.mid(5)), viewport());
+            return true;
+        }
+        if (href.startsWith(QLatin1String("commit:"))) {
+            QToolTip::showText(he->globalPos(), href.mid(7), viewport());
+            return true;
+        }
+        QToolTip::hideText();
+    }
+    return QPlainTextEdit::viewportEvent(e);
 }
 
 void DiffView::appendDiff(const DiffResult &diff) {
@@ -597,6 +870,10 @@ void DiffView::mouseReleaseEvent(QMouseEvent *e) {
     QString href = anchorAt(e->pos());
     if (href.startsWith(QLatin1String("commit:"))) {
         emit commitLinkActivated(Oid::fromHex(href.mid(7)));
+    } else if (href.startsWith(QLatin1String("copy:"))) {
+        QApplication::clipboard()->setText(href.mid(5));
+        if (QApplication::clipboard()->supportsSelection()) QApplication::clipboard()->setText(href.mid(5), QClipboard::Selection);
+        emit statusMessage(tr("Copied commit ID %1").arg(href.mid(5)), 3000);
     } else if (href.startsWith(QLatin1String("subtoggle:"))) {
         emit submoduleToggled(QUrl::fromPercentEncoding(href.mid(10).toLatin1()));
     } else if (href.startsWith(QLatin1String("subcommit:"))) {
@@ -612,3 +889,5 @@ void DiffView::contextMenuEvent(QContextMenuEvent *e) {
 }
 
 } // namespace gitq
+
+#include "DiffView.moc"

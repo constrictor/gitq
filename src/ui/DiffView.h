@@ -5,6 +5,7 @@
 #include "git/DiffEngine.h"
 #include "git/NearbyRefs.h"
 #include "git/Search.h"
+#include "ui/RefPills.h"
 
 #include <QHash>
 #include <QMap>
@@ -30,8 +31,10 @@ public:
     void clearAll();
     // Commit header (author, parents, children, message). `refs` are the refs at this commit.
     using Link = QPair<Oid, QString>;   // id, headline
-    void showHeader(const CommitInfo &c, const QList<RefInfo> &refs, const QList<Link> &parents,
-                    const QList<Link> &children, const QString &dateFormat);
+    // The header is a "card": the author's initials in a circle, the subject as a heading, author
+    // and dates, the commit id (click to copy), ref labels, parents and children; then the message.
+    void showHeader(const CommitInfo &c, const QList<RefInfo> &refs, const QString &headBranch,
+                    const QList<Link> &parents, const QList<Link> &children, const QString &dateFormat);
     void showRangeHeader(const QString &text);
     void showNearby(const NearbyRefs &nearby, int maxRefs);
     void appendDiff(const DiffResult &diff);
@@ -65,14 +68,18 @@ signals:
     void submoduleOpenRequested(const QString &path, const gitq::Oid &commit);
     void fileAtTopChanged(const QString &path);
     void diffContextMenu(const gitq::DiffLineInfo &info, const QPoint &globalPos);
+    void statusMessage(const QString &text, int timeout);
 
 protected:
     void mouseMoveEvent(QMouseEvent *e) override;
     void mouseReleaseEvent(QMouseEvent *e) override;
     void contextMenuEvent(QContextMenuEvent *e) override;
+    void paintEvent(QPaintEvent *e) override;
+    bool viewportEvent(QEvent *e) override;
 
 private:
     friend class DiffHighlighter;
+    friend class HeaderObjects;
     enum Style : quint8 { HeaderStyle, PlainStyle, OldStyle, NewStyle, HunkStyle, FileSepStyle, ErrorStyle };
     struct WordRange {
         int start;
@@ -87,6 +94,10 @@ private:
     void addBodyLine(const QString &text, quint8 style, const DiffLineInfo &meta, const QList<WordRange> &words = {});
     void flushBody();
     void appendLink(QTextCursor &cur, const QString &label, const Oid &id);
+    // Header card lines: a new block indented past the avatar, in the card's font.
+    QTextCursor appendCardLine(const QTextCharFormat &fmt, bool indent = true);
+    QTextCharFormat cardFormat(double scale = 1.0, bool bold = false, bool dim = false) const;
+    void insertObject(QTextCursor &cur, int kind, int index, const QString &href = QString());
     void renderFile(const FileDiff &f);
     void renderSubmodule(const SubmoduleChange &s);
     void appendLinkTo(QTextCursor &cur, const QString &label, const QString &href);
@@ -103,6 +114,11 @@ private:
     QStringList m_pending;                  // body lines not yet inserted
     QMap<int, QString> m_fileStarts;        // block number -> path
     int m_headerEnd = 0;                    // block number where the comment ends
+    int m_cardEnd = 0;                      // block number where the header card ends
+    QString m_avatarText;                   // initials in the card's avatar (empty: none)
+    QColor m_avatarColor;
+    QList<RefPill> m_cardPills;             // ref labels in the card
+    QString m_cardId;                       // full id shown in the card's id chip
     int m_nearbyBlock = -1;                 // block number where nearby refs are inserted
     QString m_searchText;
     FindSpec m_findSpec;

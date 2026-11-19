@@ -465,6 +465,7 @@ void RepoTab::buildUi() {
         }
     });
     connect(m_diff, &DiffView::diffContextMenu, this, &RepoTab::diffMenu);
+    connect(m_diff, &DiffView::statusMessage, this, &RepoTab::statusMessage);
 }
 
 void RepoTab::buildShortcuts() {
@@ -745,7 +746,7 @@ void RepoTab::showCommit(const Oid &id) {
     QList<DiffView::Link> parents, children;
     for (const Oid &p : c->parents) parents.append({p, headlineOf(p)});
     for (const Oid &ch : m_model->childrenOf(id)) children.append({ch, headlineOf(ch)});
-    m_diff->showHeader(*c, m_model->refsFor(id), parents, children, Settings::instance().dateFormat);
+    m_diff->showHeader(*c, m_model->refsFor(id), m_refs.headBranch, parents, children, Settings::instance().dateFormat);
     m_diff->setFindSpec(m_findSpec);
 
     // Nearby refs in the background.
@@ -828,7 +829,8 @@ void RepoTab::onDiffReady() {
         for (const Oid &p : c->parents) parents.append({p, headlineOf(p)});
         for (const Oid &ch : m_model->childrenOf(m_selected)) children.append({ch, headlineOf(ch)});
         int keep = m_diff->verticalScrollBar()->value();
-        m_diff->showHeader(*c, m_model->refsFor(m_selected), parents, children, Settings::instance().dateFormat);
+        m_diff->showHeader(*c, m_model->refsFor(m_selected), m_refs.headBranch, parents, children,
+                           Settings::instance().dateFormat);
         if (m_nearbyWatcher.isFinished() && m_nearbyWatcher.future().isValid()) {
             NearbyRefs n = m_nearbyWatcher.result();
             if (n.id == m_selected) m_diff->showNearby(n, Settings::instance().maxRefs);
