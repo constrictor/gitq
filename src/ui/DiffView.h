@@ -64,6 +64,16 @@ public:
 
     void applyFonts();
 
+    struct WordRange {
+        int start;
+        int len;
+        quint8 kind;   // OldStyle / NewStyle
+    };
+    // Ranges of the words that differ between two versions of a line, positions shifted by
+    // `offset` (the +/- mark); returns how similar the lines are (0: nothing in common, 1: same).
+    static double changedWords(const QString &oldText, const QString &newText, int offset, QList<WordRange> *oldRanges,
+                               QList<WordRange> *newRanges);
+
 signals:
     void commitLinkActivated(const gitq::Oid &id);
     // Show / hide the file changes of the submodule at `path`.
@@ -87,7 +97,7 @@ private:
     friend class DiffHighlighter;
     friend class HeaderObjects;
     friend class LineGutter;
-    enum Style : quint8 { HeaderStyle, PlainStyle, OldStyle, NewStyle, HunkStyle, FileSepStyle, ErrorStyle };
+    enum Style : quint8 { HeaderStyle, PlainStyle, OldStyle, NewStyle, HunkStyle, FileSepStyle, ErrorStyle, MetaStyle };
     // A file's header bar: status badge, path, line counts.
     struct FileHeader {
         QString path;
@@ -97,17 +107,12 @@ private:
         bool binary = false;
         bool submodule = false;
     };
-    struct WordRange {
-        int start;
-        int len;
-        quint8 kind;   // OldStyle / NewStyle
-    };
-
     // Header lines are inserted directly with formats (they contain links).
     void appendLine(const QString &text, const QTextCharFormat &fmt, const DiffLineInfo &meta = {},
                     const QTextBlockFormat &bfmt = QTextBlockFormat());
     // Body lines are buffered and inserted in one go by flushBody(); colours come from the highlighter.
-    void addBodyLine(const QString &text, quint8 style, const DiffLineInfo &meta, const QList<WordRange> &words = {});
+    void addBodyLine(const QString &text, quint8 style, const DiffLineInfo &meta, const QList<WordRange> &words = {},
+                     int markLen = 0);
     void flushBody();
     void appendLink(QTextCursor &cur, const QString &label, const Oid &id);
     // Header card lines: a new block indented past the avatar, in the card's font.
@@ -115,6 +120,8 @@ private:
     QTextCharFormat cardFormat(double scale = 1.0, bool bold = false, bool dim = false) const;
     void insertObject(QTextCursor &cur, int kind, int index, const QString &href = QString());
     void renderFile(const FileDiff &f);
+    // Background of changed words (and of the gutter beside changed lines).
+    static QColor wordBg(bool old);
     void renderSubmodule(const SubmoduleChange &s);
     void appendLinkTo(QTextCursor &cur, const QString &label, const QString &href);
     void renderWordRun(const QStringList &dels, const QStringList &adds, const QString &path, int &oldNo, int &newNo);
@@ -134,6 +141,7 @@ private:
     bool m_submoduleToggles = false;
     QList<DiffLineInfo> m_meta;             // per block
     QList<quint8> m_style;                  // per block
+    QList<quint8> m_markLen;                // per block: length of the +/- marks at its start
     QHash<int, QList<WordRange>> m_wordRanges;
     QStringList m_pending;                  // body lines not yet inserted
     QMap<int, FileHeader> m_fileStarts;     // block number of each file's header

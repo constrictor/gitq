@@ -197,10 +197,18 @@ protected:
             f.setForeground(c);
             return f;
         };
+        const int marks = n < m_view->m_markLen.size() ? m_view->m_markLen[n] : 0;
         switch (style) {
-        case DiffView::OldStyle: setFormat(0, int(text.size()), fg(st.diffOldColor)); break;
-        case DiffView::NewStyle: setFormat(0, int(text.size()), fg(st.diffNewColor)); break;
-        case DiffView::HunkStyle: setFormat(0, int(text.size()), fg(st.diffHunkColor)); break;
+        case DiffView::OldStyle:
+        case DiffView::NewStyle: {
+            // The text keeps its colour on the tinted line; the +/- marks take the line's colour.
+            QTextCharFormat mark = fg(style == DiffView::OldStyle ? st.diffOldColor : st.diffNewColor);
+            mark.setFontWeight(QFont::Bold);
+            setFormat(0, qMin(marks, int(text.size())), mark);
+            break;
+        }
+        case DiffView::HunkStyle: setFormat(0, int(text.size()), fg(Settings::mix(st.diffHunkColor, st.bgColor, 0.25))); break;
+        case DiffView::MetaStyle: setFormat(0, int(text.size()), fg(Settings::mix(st.fgColor, st.bgColor, 0.5))); break;
         case DiffView::ErrorStyle: setFormat(0, int(text.size()), fg(Qt::red)); break;
         case DiffView::FileSepStyle: {
             // Taller line for the header bar painted over it.
@@ -218,6 +226,15 @@ protected:
         auto it = m_view->m_wordRanges.constFind(n);
         if (it == m_view->m_wordRanges.cend()) return;
         const bool colorWords = m_view->m_wordMode == DiffView::ColorWords;
+        if (m_view->m_wordMode == DiffView::LineDiff) {
+            // Changed words of a changed line: a stronger tint of the line's background.
+            for (const auto &r : *it) {
+                QTextCharFormat f;
+                f.setBackground(r.kind == DiffView::OldStyle ? DiffView::wordBg(true) : DiffView::wordBg(false));
+                setFormat(r.start, r.len, f);
+            }
+            return;
+        }
         for (const auto &r : *it) {
             QTextCharFormat f = fg(r.kind == DiffView::OldStyle ? st.diffOldColor : st.diffNewColor);
             if (colorWords) f.setBackground(r.kind == DiffView::OldStyle ? st.diffOldBg : st.diffNewBg);
@@ -258,6 +275,7 @@ void DiffView::clearAll() {
     clear();
     m_meta.clear();
     m_style.clear();
+    m_markLen.clear();
     m_wordRanges.clear();
     m_pending.clear();
     m_fileStarts.clear();
@@ -283,6 +301,7 @@ void DiffView::appendLine(const QString &text, const QTextCharFormat &fmt, const
     cur.insertText(text, fmt);
     m_meta.append(meta);
     m_style.append(HeaderStyle);
+    m_markLen.append(0);
 }
 
 void DiffView::appendLink(QTextCursor &cur, const QString &label, const Oid &id) {
@@ -460,6 +479,7 @@ void DiffView::showNearby(const NearbyRefs &n, int maxRefs) {
     for (int i = 0; i < k; ++i) {
         m_meta.insert(at, DiffLineInfo());
         m_style.insert(at, HeaderStyle);
+        m_markLen.insert(at, 0);
     }
     QHash<int, QList<WordRange>> words;
     for (auto it = m_wordRanges.cbegin(); it != m_wordRanges.cend(); ++it) words.insert(it.key() + k, it.value());
@@ -472,6 +492,11 @@ void DiffView::showNearby(const NearbyRefs &n, int maxRefs) {
     m_nearbyBlock = -1;
     verticalScrollBar()->setValue(keep);
     updateExtraSelections();
+}
+
+QColor DiffView::wordBg(bool old) {
+    const Settings &st = Settings::instance();
+    return old ? Settings::mix(st.diffOldBg, st.diffOldColor, 0.22) : Settings::mix(st.diffNewBg, st.diffNewColor, 0.22);
 }
 
 int DiffView::gutterWidth() const {
@@ -537,6 +562,8 @@ void DiffView::paintGutter(QPaintEvent *e) {
             headerBar(row);
             continue;
         }
+        if (n < m_style.size() && (m_style[n] == OldStyle || m_style[n] == NewStyle))
+            p.fillRect(QRectF(0, r.top(), w - 1, r.height()), wordBg(m_style[n] == OldStyle));
         if (n >= m_meta.size() || m_meta[n].kind.isNull()) continue;
         const DiffLineInfo &m = m_meta[n];
         p.setPen(number);
@@ -572,6 +599,21 @@ void DiffView::paintEvent(QPaintEvent *e) {
                 p.setPen(Settings::mix(cardBg, st.fgColor, 0.15));
                 p.drawLine(QPointF(0, r.bottom() - 0.5), QPointF(viewport()->width(), r.bottom() - 0.5));
             }
+        }
+    }
+    {
+        // Tinted backgrounds of removed, added and hunk header lines.
+        QPainter p(viewport());
+        const QPointF offset = contentOffset();
+        const QColor hunkBg = Settings::mix(st.bgColor, st.diffHunkColor, Settings::darkTheme() ? 0.12 : 0.06);
+        for (QTextBlock b = firstVisibleBlock(); b.isValid(); b = b.next()) {
+            const QRectF r = blockBoundingGeometry(b).translated(offset);
+            if (r.top() > e->rect().bottom()) break;
+            const int n = b.blockNumber();
+            if (n >= m_style.size()) break;
+            const quint8 style = m_style[n];
+            const QColor bg = style == OldStyle ? st.diffOldBg : style == NewStyle ? st.diffNewBg : style == HunkStyle ? hunkBg : QColor();
+            if (bg.isValid()) p.fillRect(QRectF(0, r.top(), viewport()->width(), r.height()), bg);
         }
     }
     QPlainTextEdit::paintEvent(e);
@@ -802,11 +844,13 @@ void DiffView::appendDiff(const DiffResult &diff) {
     onScroll();
 }
 
-void DiffView::addBodyLine(const QString &text, quint8 style, const DiffLineInfo &meta, const QList<WordRange> &words) {
+void DiffView::addBodyLine(const QString &text, quint8 style, const DiffLineInfo &meta, const QList<WordRange> &words,
+                           int markLen) {
     if (!words.isEmpty()) m_wordRanges.insert(int(m_meta.size()), words);
     m_pending << text;
     m_meta.append(meta);
     m_style.append(style);
+    m_markLen.append(quint8(markLen));
 }
 
 void DiffView::flushBody() {
@@ -817,6 +861,37 @@ void DiffView::flushBody() {
     if (!empty) cur.insertBlock();
     cur.insertText(m_pending.join(QLatin1Char('\n')), plainFormat());
     m_pending.clear();
+}
+
+double DiffView::changedWords(const QString &oldText, const QString &newText, int offset, QList<WordRange> *oldRanges,
+                              QList<WordRange> *newRanges) {
+    if (oldText.size() > 1000 || newText.size() > 1000) return 0;
+    const QList<WordSeg> segs = DiffEngine::wordDiff(oldText, newText);
+    int same = 0, op = offset, np = offset;
+    QList<WordRange> o, nw;
+    for (const WordSeg &s : segs) {
+        const int len = int(s.text.size());
+        switch (s.kind) {
+        case WordSeg::Same:
+            same += int(s.text.trimmed().size());
+            op += len;
+            np += len;
+            break;
+        case WordSeg::Removed:
+            o.append({op, len, OldStyle});
+            op += len;
+            break;
+        case WordSeg::Added:
+            nw.append({np, len, NewStyle});
+            np += len;
+            break;
+        }
+    }
+    const int total = int(oldText.trimmed().size() + newText.trimmed().size());
+    if (total == 0) return 0;
+    *oldRanges = o;
+    *newRanges = nw;
+    return 2.0 * same / total;
 }
 
 void DiffView::renderFile(const FileDiff &f) {
@@ -848,6 +923,43 @@ void DiffView::renderFile(const FileDiff &f) {
     int oldNo = 0, newNo = 0;
     QStringList dels, adds;
     const bool words = m_wordMode != LineDiff && n == 1 && m_mode == ShowDiff;
+    // Line diff: a run of removed lines followed by added ones is emitted together, so that each
+    // removed line and the added line paired with it can show which words changed.
+    const bool pairLines = m_wordMode == LineDiff && n == 1 && m_mode == ShowDiff;
+    struct RunLine {
+        QString text;
+        DiffLineInfo meta;
+    };
+    QList<RunLine> lineDels, lineAdds;
+    auto flushLines = [&] {
+        // Pair each removed line with the most similar added line not before the previous pair's
+        // (looking a few lines ahead), if they are similar enough.
+        QList<QList<WordRange>> delWords(lineDels.size()), addWords(lineAdds.size());
+        int from = 0;
+        for (int i = 0; i < lineDels.size() && from < lineAdds.size(); ++i) {
+            double best = 0;
+            int bestAt = -1;
+            QList<WordRange> bestOld, bestNew;
+            for (int k = from; k < qMin(int(lineAdds.size()), from + 8); ++k) {
+                QList<WordRange> o, nw;
+                const double sim = changedWords(lineDels[i].text.mid(1), lineAdds[k].text.mid(1), 1, &o, &nw);
+                if (sim > best) {
+                    best = sim;
+                    bestAt = k;
+                    bestOld = o;
+                    bestNew = nw;
+                }
+            }
+            if (bestAt < 0 || best < 0.4) continue;
+            delWords[i] = bestOld;
+            addWords[bestAt] = bestNew;
+            from = bestAt + 1;
+        }
+        for (int i = 0; i < lineDels.size(); ++i) addBodyLine(lineDels[i].text, OldStyle, lineDels[i].meta, delWords[i], 1);
+        for (int i = 0; i < lineAdds.size(); ++i) addBodyLine(lineAdds[i].text, NewStyle, lineAdds[i].meta, addWords[i], 1);
+        lineDels.clear();
+        lineAdds.clear();
+    };
     auto flushRun = [&] {
         if (dels.isEmpty() && adds.isEmpty()) return;
         renderWordRun(dels, adds, f.path(), oldNo, newNo);
@@ -863,12 +975,13 @@ void DiffView::renderFile(const FileDiff &f) {
                 if (line.startsWith(QLatin1String("diff --")) || line.startsWith(QLatin1String("--- ")) ||
                     line.startsWith(QLatin1String("+++ ")))
                     continue;
-                addBodyLine(line, PlainStyle, fileMeta);
+                addBodyLine(line, MetaStyle, fileMeta);
                 continue;
             }
         }
         if (line.startsWith(QLatin1String("@@"))) {
             flushRun();
+            flushLines();
             auto m = hunkRe().match(line);
             if (m.hasMatch()) {
                 oldNo = m.captured(1).toInt();
@@ -882,7 +995,8 @@ void DiffView::renderFile(const FileDiff &f) {
             continue;
         }
         if (line.startsWith(QLatin1Char('\\'))) {
-            addBodyLine(line, PlainStyle, fileMeta);
+            flushLines();
+            addBodyLine(line, MetaStyle, fileMeta);
             continue;
         }
         const QString marks = line.left(n);
@@ -905,10 +1019,18 @@ void DiffView::renderFile(const FileDiff &f) {
         }
         if (m_mode == ShowOld && isAdd && !isDel) continue;
         if (m_mode == ShowNew && isDel) continue;
-        QString text = m_mode == ShowDiff ? line : line.mid(n);
-        addBodyLine(text, isDel ? OldStyle : isAdd ? NewStyle : PlainStyle, meta);
+        if (pairLines && (isDel || isAdd)) {
+            if (isDel && !lineAdds.isEmpty()) flushLines();
+            (isDel ? lineDels : lineAdds).append({line, meta});
+            continue;
+        }
+        flushLines();
+        const bool diff = m_mode == ShowDiff;
+        QString text = diff ? line : line.mid(n);
+        addBodyLine(text, isDel ? OldStyle : isAdd ? NewStyle : PlainStyle, meta, {}, diff ? n : 0);
     }
     flushRun();
+    flushLines();
 }
 
 // A submodule entry: what it moved from and to, the commits in between (as links that open the

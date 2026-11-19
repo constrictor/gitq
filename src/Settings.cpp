@@ -66,8 +66,8 @@ Settings Settings::themeDefaults() {
     d.diffOldColor = QColor(0xff, 0x7b, 0x72);
     d.diffNewColor = QColor(0x56, 0xd3, 0x64);
     d.diffHunkColor = QColor(0x6c, 0xa8, 0xff);
-    d.diffOldBg = mix(d.bgColor, QColor(0xff, 0x40, 0x40), 0.15);
-    d.diffNewBg = mix(d.bgColor, QColor(0x40, 0xff, 0x40), 0.12);
+    d.diffOldBg = mix(d.bgColor, QColor(0xf8, 0x51, 0x49), 0.16);
+    d.diffNewBg = mix(d.bgColor, QColor(0x2e, 0xa0, 0x43), 0.2);
     d.markBgColor = mix(d.bgColor, QColor(0x80, 0x80, 0xff), 0.3);
     d.fileSepBgColor = mix(d.bgColor, d.fgColor, 0.1);
     d.foundBgColor = QColor(0x80, 0x6c, 0x00);
@@ -89,6 +89,11 @@ Settings Settings::legacyDefaults() {
     d.tagBgColor = Qt::yellow;
     d.otherRefBgColor = QColor(0xdd, 0xdd, 0xff);
     d.fileSepBgColor = QColor(0xaa, 0xaa, 0xaa);
+    d.diffOldColor = QColor(0xc3, 0x00, 0x00);
+    d.diffNewColor = QColor(0x00, 0x98, 0x00);
+    d.diffHunkColor = Qt::blue;
+    d.diffOldBg = QColor(0xff, 0xf3, 0xf3);
+    d.diffNewBg = QColor(0xf0, 0xff, 0xf0);
     return d;
 }
 

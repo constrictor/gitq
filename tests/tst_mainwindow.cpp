@@ -361,6 +361,18 @@ private slots:
         QTRY_VERIFY(diff->verticalScrollBar()->value() < 20);
     }
 
+    void changedWords() {
+        QList<DiffView::WordRange> o, n;
+        const double sim = DiffView::changedWords("int x = 1;", "int x = 23;", 1, &o, &n);
+        QVERIFY(sim > 0.5);
+        QCOMPARE(o.size(), 1);
+        QCOMPARE(n.size(), 1);
+        QCOMPARE(o[0].start, 9);   // after the mark and "int x = "
+        QCOMPARE(o[0].len, 1);
+        QCOMPARE(n[0].len, 2);
+        QVERIFY(DiffView::changedWords("import os", "def greet(name):", 1, &o, &n) < 0.4);
+    }
+
     void hoverRow() {
         MainWindow w(repo->path(), {});
         w.resize(1200, 900);

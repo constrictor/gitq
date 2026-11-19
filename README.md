@@ -68,6 +68,8 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
   then the message and the diff. Merges show a combined (`--cc`) diff. Each file starts with a header bar
   (status badge, directory and file name, +added / −removed lines and a five-block bar); the header of
   the file being read sticks to the top of the pane, and clicking it goes back to the file's start.
+  Removed and added lines have tinted backgrounds (the text keeps its colour, the +/- marks take the
+  line's); in a removed line and the most similar added line the changed words get a stronger tint.
   A gutter shows old and new line numbers (the result's for merges; one column in Tree mode); clicking
   it selects the line, right-clicking it opens the line's menu.
 - Diff tool bar in one compact row: Diff / Old / New version, lines of context, ignore space change,
