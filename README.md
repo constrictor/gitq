@@ -78,6 +78,8 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
   Side by side, the old version is on the left and the new on the right, similar lines facing each
   other, missing lines hatched and long lines wrapped to the column width (laid out again when the
   pane is resized); the new side's line numbers are between the columns.
+  A strip in the diff's scroll bar marks where the removed and added lines, the files and the search
+  hits are.
   A gutter shows old and new line numbers (the result's for merges; one column in Tree mode); clicking
   it selects the line, right-clicking it opens the line's menu.
 - Diff tool bar in one compact row: Diff / Old / New version, unified or side-by-side diff, lines of

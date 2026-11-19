@@ -104,6 +104,7 @@ private:
     friend class DiffHighlighter;
     friend class HeaderObjects;
     friend class LineGutter;
+    friend class MarkerScrollBar;
     enum Style : quint8 {
         HeaderStyle, PlainStyle, OldStyle, NewStyle, HunkStyle, FileSepStyle, ErrorStyle, MetaStyle,
         SplitStyle,   // a side-by-side row; see m_splitRows
@@ -156,6 +157,8 @@ private:
     void appendLinkTo(QTextCursor &cur, const QString &label, const QString &href);
     void renderWordRun(const QStringList &dels, const QStringList &adds, const QString &path, int &oldNo, int &newNo);
     void updateExtraSelections();
+    // Marks in the scroll bar: changed lines, file starts, search hits.
+    void updateMarkers(const QList<int> &searchHits);
     // Line number gutter left of the text.
     int gutterWidth() const;
     void updateGutter();
@@ -188,6 +191,11 @@ private:
     QList<RefPill> m_cardPills;             // ref labels in the card
     QString m_cardId;                       // full id shown in the card's id chip
     QWidget *m_gutter = nullptr;
+    struct Marker {
+        double from, to;   // fractions of the document
+        QColor color;
+    };
+    QList<Marker> m_markers;
     int m_gutterDigits = 0;                 // 0: no line numbers to show
     bool m_singleNumberColumn = false;      // file contents (Tree mode): one number per line
     int m_nearbyBlock = -1;                 // block number where nearby refs are inserted

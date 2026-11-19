@@ -11,6 +11,7 @@
 #include <QHelpEvent>
 #include <QMouseEvent>
 #include <QResizeEvent>
+#include <QStyleOptionSlider>
 #include <QTimer>
 #include <QPainter>
 #include <QPlainTextDocumentLayout>
@@ -182,6 +183,34 @@ private:
     DiffView *m_view;
 };
 
+// The vertical scroll bar, with marks showing where the changes, files and search hits are.
+class MarkerScrollBar : public QScrollBar {
+public:
+    explicit MarkerScrollBar(DiffView *view) : QScrollBar(Qt::Vertical, view), m_view(view) {}
+
+protected:
+    void paintEvent(QPaintEvent *e) override {
+        QScrollBar::paintEvent(e);
+        if (m_view->m_markers.isEmpty()) return;
+        QStyleOptionSlider opt;
+        initStyleOption(&opt);
+        QRect groove = style()->subControlRect(QStyle::CC_ScrollBar, &opt, QStyle::SC_ScrollBarGroove, this);
+        if (groove.height() <= 0) groove = rect();
+        QPainter p(this);
+        // A strip along the right edge, so the slider stays visible beside it.
+        const double h = groove.height();
+        const double strip = qMax(3.0, groove.width() * 0.4);
+        const double x = groove.right() + 1 - strip - 1;
+        for (const DiffView::Marker &m : std::as_const(m_view->m_markers)) {
+            const double y1 = groove.top() + m.from * h, y2 = qMax(y1 + 2, groove.top() + m.to * h);
+            p.fillRect(QRectF(x, y1, strip, y2 - y1), m.color);
+        }
+    }
+
+private:
+    DiffView *m_view;
+};
+
 // Colours body lines from the per-block styles recorded while rendering.
 class DiffHighlighter : public QSyntaxHighlighter {
 public:
@@ -333,6 +362,7 @@ DiffView::DiffView(QWidget *parent) : QPlainTextEdit(parent) {
     document()->setDocumentLayout(new CenteredObjectLayout(document()));
     document()->documentLayout()->registerHandler(kObjectType, new HeaderObjects(this));
     new DiffHighlighter(this);
+    setVerticalScrollBar(new MarkerScrollBar(this));
     m_gutter = new LineGutter(this);
     m_resplitTimer = new QTimer(this);
     m_resplitTimer->setSingleShot(true);
@@ -378,6 +408,7 @@ void DiffView::clearAll() {
     m_splitRows.clear();
     m_splitWidth = 0;
     m_hasResult = false;
+    m_markers.clear();
     m_nearbyBlock = -1;
     m_lastTopFile.clear();
     m_currentSearchHit = QTextCursor();
@@ -1620,12 +1651,14 @@ void DiffView::updateExtraSelections() {
             }
         }
     }
+    QList<int> hits;
     if (!m_searchText.isEmpty()) {
         QTextCursor c(document());
         int count = 0;
         while (count++ < 2000) {
             c = document()->find(m_searchText, c);
             if (c.isNull()) break;
+            hits << c.blockNumber();
             QTextEdit::ExtraSelection s;
             s.cursor = c;
             bool current = !m_currentSearchHit.isNull() && c.selectionStart() == m_currentSearchHit.selectionStart();
@@ -1634,6 +1667,36 @@ void DiffView::updateExtraSelections() {
         }
     }
     setExtraSelections(sels);
+    updateMarkers(hits);
+}
+
+void DiffView::updateMarkers(const QList<int> &searchHits) {
+    const Settings &st = Settings::instance();
+    m_markers.clear();
+    const double total = qMax(1, document()->blockCount());
+    // Runs of changed lines, merged when close together.
+    auto add = [&](int from, int to, const QColor &c) {
+        if (!m_markers.isEmpty() && m_markers.last().color == c && from / total - m_markers.last().to < 0.004) {
+            m_markers.last().to = to / total;
+            return;
+        }
+        m_markers.append({from / total, to / total, c});
+    };
+    const QColor removed = st.diffOldColor, added = st.diffNewColor;
+    for (int n = m_headerEnd; n < m_style.size(); ++n) {
+        QColor c;
+        if (m_style[n] == OldStyle) c = removed;
+        else if (m_style[n] == NewStyle) c = added;
+        else if (m_style[n] == SplitStyle) {
+            const SplitRow row = m_splitRows.value(n);
+            c = row.right == QLatin1Char('+') ? added : row.left == QLatin1Char('-') ? removed : QColor();
+        }
+        if (c.isValid()) add(n, n + 1, c);
+    }
+    const QColor file = Settings::mix(st.fgColor, st.bgColor, 0.55);
+    for (auto it = m_fileStarts.cbegin(); it != m_fileStarts.cend(); ++it) m_markers.append({it.key() / total, it.key() / total, file});
+    for (int b : searchHits) m_markers.append({b / total, (b + 1) / total, st.currentSearchBgColor});
+    verticalScrollBar()->update();
 }
 
 void DiffView::mouseMoveEvent(QMouseEvent *e) {

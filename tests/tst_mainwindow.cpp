@@ -349,6 +349,10 @@ private slots:
         waitLoaded(&w);
         auto *diff = child<DiffView>(&w, "diffView");
         QTRY_COMPARE(diffFiles(&w), (QStringList{"a/long.txt", "b.txt"}));
+        // The scroll bar marks the added lines (most of this diff) in green.
+        const QImage marks = diff->verticalScrollBar()->grab().toImage();
+        const QColor mid = marks.pixelColor(marks.width() / 2, marks.height() / 2);
+        QVERIFY2(mid.green() > mid.red() + 40, qPrintable(mid.name()));
         const QColor bar = Settings::instance().fileSepBgColor;
         auto topPixel = [&] { return diff->viewport()->grab().toImage().pixelColor(diff->viewport()->width() / 2, 2); };
         QVERIFY(topPixel() != bar);   // the header card is at the top
