@@ -3,6 +3,7 @@
 #include "TestRepo.h"
 #include "model/CommitModel.h"
 #include "model/FileListModel.h"
+#include "ui/Choice.h"
 #include "ui/CommitListView.h"
 #include "ui/DiffView.h"
 #include "ui/MainWindow.h"
@@ -138,12 +139,12 @@ private slots:
         w.show();
         waitLoaded(&w);
         selectId(&w, fixId);
-        child<QComboBox>(&w, "wordDiff")->setCurrentIndex(1);   // markup words
+        child<Choice>(&w, "wordDiff")->setCurrentIndex(1);   // markup words
         QTRY_VERIFY(diffText(&w).contains(QStringLiteral("[-1-]{+3+}")));
-        child<QComboBox>(&w, "wordDiff")->setCurrentIndex(2);   // color words
+        child<Choice>(&w, "wordDiff")->setCurrentIndex(2);   // color words
         QTRY_VERIFY(diffText(&w).contains(QStringLiteral(" int x = 13;")));
         shot(&w, QStringLiteral("05-colorwords"));
-        child<QComboBox>(&w, "wordDiff")->setCurrentIndex(0);
+        child<Choice>(&w, "wordDiff")->setCurrentIndex(0);
         QTRY_VERIFY(diffText(&w).contains(QStringLiteral("+int x = 3;")));
 
         child<QRadioButton>(&w, "treeMode")->setChecked(true);
@@ -180,7 +181,7 @@ private slots:
         };
 
         // Commits: the submodule's commits in between; its files on request.
-        auto *mode = child<QComboBox>(&w, "submoduleMode");
+        auto *mode = child<Choice>(&w, "submoduleMode");
         mode->setCurrentIndex(DiffOptions::SubmoduleLog);
         QTRY_VERIFY(diffText(&w).contains("Submodule lib/sub " + s1.left(7) + ".." + s2.left(7)));
         QVERIFY(diffText(&w).contains("  > " + s2.left(7) + " Change x in sub"));

@@ -5,13 +5,16 @@
 #include "model/CommitModel.h"
 #include "model/FileListModel.h"
 #include "ui/BlameWindow.h"
+#include "ui/Choice.h"
 #include "ui/CommitListView.h"
 #include "ui/Dialogs.h"
+#include "ui/Glyphs.h"
 #include "ui/GraphDelegate.h"
 #include "ui/ViewDialog.h"
 
 #include <QAction>
 #include <QApplication>
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
@@ -215,52 +218,106 @@ void RepoTab::buildUi() {
     fbar->addWidget(m_findField);
     tl->addLayout(fbar);
 
-    // --- diff pane
+    // --- diff pane: one compact tool bar above the diff
     m_diffPane = new QWidget;
     auto *ll = new QVBoxLayout(m_diffPane);
     ll->setContentsMargins(0, 0, 0, 0);
     ll->setSpacing(2);
-    auto *sbar = new QHBoxLayout;
-    auto *searchBtn = new QPushButton(tr("Search"));
-    m_searchEdit = new QLineEdit;
-    m_searchEdit->setObjectName(QStringLiteral("searchEdit"));
-    m_searchEdit->setClearButtonEnabled(true);
-    sbar->addWidget(searchBtn);
-    sbar->addWidget(m_searchEdit, 1);
-    ll->addLayout(sbar);
     auto *mbar = new QHBoxLayout;
-    m_modeDiff = new QRadioButton(tr("Diff"));
-    m_modeOld = new QRadioButton(tr("Old version"));
-    m_modeNew = new QRadioButton(tr("New version"));
+    mbar->setContentsMargins(2, 2, 2, 0);
+    mbar->setSpacing(4);
+    // What to show: the diff, or the old or new version of the files (segmented buttons).
+    auto *modeGroup = new QButtonGroup(m_diffPane);
+    auto *modeBox = new QHBoxLayout;
+    modeBox->setSpacing(0);
+    auto modeButton = [&](const QString &text, const QString &tip, const char *name) {
+        auto *b = new QToolButton;
+        b->setText(text);
+        b->setToolTip(tip);
+        b->setObjectName(QLatin1String(name));
+        b->setCheckable(true);
+        modeGroup->addButton(b);
+        modeBox->addWidget(b);
+        return b;
+    };
+    m_modeDiff = modeButton(tr("Diff"), tr("Show the diff"), "modeDiff");
+    m_modeOld = modeButton(tr("Old"), tr("Show the old version of the changed lines"), "modeOld");
+    m_modeNew = modeButton(tr("New"), tr("Show the new version of the changed lines"), "modeNew");
     m_modeDiff->setChecked(true);
+    mbar->addLayout(modeBox);
+    mbar->addSpacing(6);
+
     m_contextSpin = new QSpinBox;
     m_contextSpin->setObjectName(QStringLiteral("contextSpin"));
     m_contextSpin->setRange(0, 1000);
     m_contextSpin->setValue(Settings::instance().diffContext);
-    m_ignoreSpace = new QCheckBox(tr("Ignore space change"));
-    m_ignoreSpace->setChecked(Settings::instance().ignoreSpace);
-    m_wordDiff = new QComboBox;
-    m_wordDiff->setObjectName(QStringLiteral("wordDiff"));
-    m_wordDiff->addItems({tr("Line diff"), tr("Markup words"), tr("Color words")});
-    m_wordDiff->setCurrentIndex(Settings::instance().wordDiff);
-    m_submoduleMode = new QComboBox;
-    m_submoduleMode->setObjectName(QStringLiteral("submoduleMode"));
-    m_submoduleMode->addItems({tr("Summary"), tr("Commits"), tr("Full diff")});
-    m_submoduleMode->setToolTip(tr("Submodule changes: the commits recorded, the commits in between (click "
-                                   "\"show files\" for their changes), or every file change inside"));
-    m_submoduleMode->setCurrentIndex(qBound(0, Settings::instance().submoduleDiff, 2));
-    for (QWidget *w : {static_cast<QWidget *>(m_modeDiff), static_cast<QWidget *>(m_modeOld),
-                       static_cast<QWidget *>(m_modeNew)})
-        mbar->addWidget(w);
-    mbar->addSpacing(10);
-    mbar->addWidget(new QLabel(tr("Lines of context:")));
+    m_contextSpin->setPrefix(tr("Context "));
+    m_contextSpin->setToolTip(tr("Lines of context around each change"));
     mbar->addWidget(m_contextSpin);
+
+    m_ignoreSpace = new QToolButton;
+    m_ignoreSpace->setObjectName(QStringLiteral("ignoreSpace"));
+    m_ignoreSpace->setCheckable(true);
+    m_ignoreSpace->setAutoRaise(true);
+    m_ignoreSpace->setIcon(glyphIcon(Glyph::Whitespace));
+    m_ignoreSpace->setToolTip(tr("Ignore changes in the amount of white space (git diff -b)"));
+    m_ignoreSpace->setChecked(Settings::instance().ignoreSpace);
     mbar->addWidget(m_ignoreSpace);
-    mbar->addWidget(m_wordDiff);
-    mbar->addSpacing(10);
-    mbar->addWidget(new QLabel(tr("Submodules:")));
-    mbar->addWidget(m_submoduleMode);
-    mbar->addStretch(1);
+
+    m_wordDiff = new Choice({tr("Line diff"), tr("Markup words"), tr("Color words")}, Settings::instance().wordDiff,
+                            m_diffPane);
+    m_wordDiff->setObjectName(QStringLiteral("wordDiff"));
+    auto *wordBtn = new QToolButton;
+    wordBtn->setObjectName(QStringLiteral("wordDiffButton"));
+    wordBtn->setPopupMode(QToolButton::InstantPopup);
+    wordBtn->setAutoRaise(true);
+    wordBtn->setToolTip(tr("Line or word diff"));
+    auto *wordMenu = new QMenu(wordBtn);
+    wordMenu->addActions(m_wordDiff->actions());
+    wordBtn->setMenu(wordMenu);
+    wordBtn->setText(m_wordDiff->currentText());
+    connect(m_wordDiff, &Choice::currentIndexChanged, wordBtn, [this, wordBtn] { wordBtn->setText(m_wordDiff->currentText()); });
+    mbar->addWidget(wordBtn);
+    mbar->addSpacing(6);
+
+    // Search in the diff: the field finds as you type; the arrows (Ctrl-R / Ctrl-S) go to the
+    // previous / next hit.
+    m_searchEdit = new QLineEdit;
+    m_searchEdit->setObjectName(QStringLiteral("searchEdit"));
+    m_searchEdit->setClearButtonEnabled(true);
+    m_searchEdit->setPlaceholderText(tr("Search diff"));
+    m_searchEdit->setMinimumWidth(QFontMetrics(font()).horizontalAdvance(QLatin1Char('x')) * 20);
+    m_searchEdit->addAction(glyphIcon(Glyph::Search), QLineEdit::LeadingPosition);
+    // Trailing actions are placed right to left.
+    QAction *searchNext = m_searchEdit->addAction(glyphIcon(Glyph::ArrowDown), QLineEdit::TrailingPosition);
+    searchNext->setToolTip(tr("Next match (Ctrl-S)"));
+    QAction *searchPrev = m_searchEdit->addAction(glyphIcon(Glyph::ArrowUp), QLineEdit::TrailingPosition);
+    searchPrev->setToolTip(tr("Previous match (Ctrl-R)"));
+    mbar->addWidget(m_searchEdit, 1);
+
+    // Less frequent options behind an overflow button.
+    m_submoduleMode = new Choice({tr("Summary (the recorded commits)"), tr("Commits in between"), tr("Full diff")},
+                                 qBound(0, Settings::instance().submoduleDiff, 2), m_diffPane);
+    m_submoduleMode->setObjectName(QStringLiteral("submoduleMode"));
+    auto *more = new QToolButton;
+    more->setObjectName(QStringLiteral("diffMore"));
+    more->setIcon(glyphIcon(Glyph::More));
+    more->setAutoRaise(true);
+    more->setPopupMode(QToolButton::InstantPopup);
+    more->setToolTip(tr("More diff options"));
+    auto *moreMenu = new QMenu(more);
+    QAction *wrap = moreMenu->addAction(tr("Wrap long lines"));
+    wrap->setCheckable(true);
+    wrap->setChecked(Settings::instance().wrapDiff);
+    connect(wrap, &QAction::toggled, this, [this](bool on) {
+        Settings::instance().wrapDiff = on;
+        m_diff->applyFonts();
+    });
+    connect(moreMenu, &QMenu::aboutToShow, wrap, [wrap] { wrap->setChecked(Settings::instance().wrapDiff); });
+    moreMenu->addSection(tr("Submodule changes"));
+    moreMenu->addActions(m_submoduleMode->actions());
+    more->setMenu(moreMenu);
+    mbar->addWidget(more);
     ll->addLayout(mbar);
     m_diff = new DiffView;
     m_diff->setObjectName(QStringLiteral("diffView"));
@@ -312,7 +369,8 @@ void RepoTab::buildUi() {
     connect(m_findDownBtn, &QToolButton::clicked, this, [this] { findNext(1); });
     connect(m_findUpBtn, &QToolButton::clicked, this, [this] { findNext(-1); });
 
-    connect(searchBtn, &QPushButton::clicked, this, [this] { m_diff->searchNext(false); });
+    connect(searchNext, &QAction::triggered, this, [this] { m_diff->searchNext(false); });
+    connect(searchPrev, &QAction::triggered, this, [this] { m_diff->searchNext(true); });
     connect(m_searchEdit, &QLineEdit::textChanged, m_diff, &DiffView::setSearchText);
     connect(m_searchEdit, &QLineEdit::returnPressed, this, [this] { m_diff->searchNext(false); });
 
@@ -325,11 +383,11 @@ void RepoTab::buildUi() {
         startDiff();
     };
     connect(m_contextSpin, &QSpinBox::valueChanged, this, redisplay);
-    connect(m_ignoreSpace, &QCheckBox::toggled, this, redisplay);
-    connect(m_wordDiff, &QComboBox::currentIndexChanged, this, redisplay);
-    connect(m_submoduleMode, &QComboBox::currentIndexChanged, this, redisplay);
-    for (QRadioButton *b : {m_modeDiff, m_modeOld, m_modeNew})
-        connect(b, &QRadioButton::toggled, this, [this, redisplay](bool on) {
+    connect(m_ignoreSpace, &QToolButton::toggled, this, redisplay);
+    connect(m_wordDiff, &Choice::currentIndexChanged, this, redisplay);
+    connect(m_submoduleMode, &Choice::currentIndexChanged, this, redisplay);
+    for (QToolButton *b : {m_modeDiff, m_modeOld, m_modeNew})
+        connect(b, &QToolButton::toggled, this, [this, redisplay](bool on) {
             if (on) redisplay();
         });
     connect(m_patchMode, &QRadioButton::toggled, this, [this](bool) { fillFileList(); });

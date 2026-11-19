@@ -63,11 +63,12 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
   matches are bold, Return / Shift-Up / Shift-Down / `?` move between them.
 - Details pane: author/committer, tags, clickable Parent/Child links, Branches / Follows / Precedes
   (computed in the background), message, diff. Merges show a combined (`--cc`) diff.
-- Diff options: lines of context, ignore space change, line / markup words / color words,
-  Diff / Old version / New version, diff search (Search field, Ctrl-S / Ctrl-R).
+- Diff tool bar in one compact row: Diff / Old / New version, lines of context, ignore space change,
+  line / markup words / color words, diff search (finds as you type; arrows or Ctrl-R / Ctrl-S for the
+  previous / next match); the ⋯ menu wraps long lines and chooses how submodule changes are shown.
 - File list: Patch mode (scrolls to the file, tracks the file on screen) and Tree mode (file contents).
 - Submodules: a commit that moves a submodule lists the submodule's commits in between
-  (Submodules: *Commits*, the default); *[show files]* adds its file changes to the diff and file list
+  (⋯ ▸ Submodule changes: *Commits in between*, the default); *[show files]* adds its file changes to the diff and file list
   as ordinary files under the submodule's path, *Full diff* does that for every submodule, *Summary*
   shows git's `Subproject commit` lines. Works for nested submodules and local changes inside them.
   Commit ids in the list and *[open in tab]* open the submodule in a tab of its own; blame, line

@@ -34,6 +34,7 @@ class QToolButton;
 
 namespace gitq {
 
+class Choice;
 class CommitListView;
 class CommitModel;
 class FileListModel;
@@ -187,11 +188,11 @@ private:
     QLineEdit *m_findEdit;
     QTimer *m_findTimer;
     QLineEdit *m_searchEdit;
-    QRadioButton *m_modeDiff, *m_modeOld, *m_modeNew;
+    QToolButton *m_modeDiff, *m_modeOld, *m_modeNew;
     QSpinBox *m_contextSpin;
-    QCheckBox *m_ignoreSpace;
-    QComboBox *m_wordDiff;
-    QComboBox *m_submoduleMode;
+    QToolButton *m_ignoreSpace;
+    Choice *m_wordDiff;
+    Choice *m_submoduleMode;
     DiffView *m_diff;
     QRadioButton *m_patchMode, *m_treeMode;
     QListView *m_files;
