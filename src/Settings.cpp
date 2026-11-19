@@ -135,6 +135,7 @@ void Settings::load() {
     wordDiff = q.value(QStringLiteral("wordDiff"), wordDiff).toInt();
     submoduleDiff = q.value(QStringLiteral("submoduleDiff"), submoduleDiff).toInt();
     dateFormat = q.value(QStringLiteral("dateFormat"), dateFormat).toString();
+    relativeDates = q.value(QStringLiteral("relativeDates"), relativeDates).toBool();
     extDiffTool = q.value(QStringLiteral("extDiffTool"), extDiffTool).toString();
     maxRefs = q.value(QStringLiteral("maxRefs"), maxRefs).toInt();
     q.endGroup();
@@ -199,6 +200,7 @@ void Settings::save() const {
     q.setValue(QStringLiteral("wordDiff"), wordDiff);
     q.setValue(QStringLiteral("submoduleDiff"), submoduleDiff);
     q.setValue(QStringLiteral("dateFormat"), dateFormat);
+    q.setValue(QStringLiteral("relativeDates"), relativeDates);
     q.setValue(QStringLiteral("extDiffTool"), extDiffTool);
     q.setValue(QStringLiteral("maxRefs"), maxRefs);
     q.endGroup();

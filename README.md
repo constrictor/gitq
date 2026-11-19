@@ -53,7 +53,8 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
   restores the gitk arrangement and the View menu reopens closed panes.
 - Commit list with graph (one colour per lane, curved lane changes, hollow merge commits, a ring around
   HEAD), ref labels with icons (heads, remotes, tags; the checked-out branch in bold; a branch and its
-  upstream at the same commit share a label, otherwise the branch shows ↑ahead ↓behind), author, date;
+  upstream at the same commit share a label, otherwise the branch shows ↑ahead ↓behind), author, date
+  (relative, "3 hours ago", with the exact time in the tooltip; Preferences switch to absolute dates);
   streaming load; long edges elided with arrows like gitk; local uncommitted / staged changes rows.
 - SHA1 field (goto by id prefix, ref name or any revision), back/forward history, row counter.
 - Find bar: *containing* (all fields / headline / comments / author / committer), *touching paths*,

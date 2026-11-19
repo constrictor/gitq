@@ -102,6 +102,7 @@ QWidget *PrefsDialog::generalPage() {
     intField(f, tr("Tab spacing"), m_s.tabStop, 1, 20);
     textField(f, tr("External diff tool"), m_s.extDiffTool);
     textField(f, tr("Date format (Qt syntax)"), m_s.dateFormat);
+    boolField(f, tr("Relative dates in the commit list (\"2 hours ago\")"), m_s.relativeDates);
     return w;
 }
 

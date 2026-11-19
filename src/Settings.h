@@ -38,6 +38,7 @@ struct Settings {
     int wordDiff = 0;            // 0 line diff, 1 markup words, 2 color words
     int submoduleDiff = 1;       // DiffOptions::Submodules: 0 summary, 1 commits, 2 full diff
     QString dateFormat = QStringLiteral("yyyy-MM-dd HH:mm:ss");
+    bool relativeDates = true;   // commit list: "2 hours ago", the exact time in the tooltip
     QString extDiffTool = QStringLiteral("meld");
     int maxRefs = 20;            // max refs to list in "Branches/Follows/Precedes"
 

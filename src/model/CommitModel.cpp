@@ -75,6 +75,40 @@ QString CommitModel::formatDate(qint64 secs) const {
     return QDateTime::fromSecsSinceEpoch(secs).toString(m_dateFormat);
 }
 
+QString CommitModel::relativeTime(qint64 secs, qint64 now) {
+    // No translations are loaded, so plurals are spelled out rather than left to "%n(s)".
+    auto n = [](qint64 v, const QString &one, const QString &many) { return v == 1 ? one : many.arg(v); };
+    const qint64 d = now - secs;
+    if (d < -60) return QString();
+    if (d < 45) return tr("just now");
+    const qint64 min = (d + 30) / 60, hours = (d + 1800) / 3600, days = (d + 43200) / 86400;
+    if (min < 60) return n(min, tr("1 minute ago"), tr("%1 minutes ago"));
+    if (hours < 24) return n(hours, tr("1 hour ago"), tr("%1 hours ago"));
+    if (days == 1) return tr("yesterday");
+    if (days < 14) return n(days, tr("1 day ago"), tr("%1 days ago"));
+    if (days < 60) return n((days + 3) / 7, tr("1 week ago"), tr("%1 weeks ago"));
+    if (days < 365) return n((days + 15) / 30, tr("1 month ago"), tr("%1 months ago"));
+    const qint64 years = days / 365, months = (days % 365 + 15) / 30;
+    if (years < 5 && months > 0 && months < 12)
+        return n(years, tr("1 year"), tr("%1 years")) + QStringLiteral(", ") +
+               n(months, tr("1 month ago"), tr("%1 months ago"));
+    return n((days + 182) / 365, tr("1 year ago"), tr("%1 years ago"));
+}
+
+QString CommitModel::displayDate(qint64 secs) const {
+    if (m_relativeDates) {
+        const QString rel = relativeTime(secs, QDateTime::currentSecsSinceEpoch());
+        if (!rel.isEmpty()) return rel;
+    }
+    return formatDate(secs);
+}
+
+void CommitModel::setRelativeDates(bool on) {
+    if (m_relativeDates == on) return;
+    m_relativeDates = on;
+    if (!m_commits.isEmpty()) emit dataChanged(index(0, 0), index(rowCount() - 1, DateColumn));
+}
+
 void CommitModel::setDateFormat(const QString &fmt) {
     m_dateFormat = fmt;
     if (!m_commits.isEmpty()) emit dataChanged(index(0, DateColumn), index(rowCount() - 1, DateColumn));
@@ -85,11 +119,16 @@ QVariant CommitModel::data(const QModelIndex &idx, int role) const {
     if (!c) return {};
     if (role == Qt::DisplayRole || role == Qt::ToolTipRole) {
         switch (idx.column()) {
-        case SubjectColumn: return c->subject;
+        case SubjectColumn:
+            if (role == Qt::ToolTipRole && !c->id.isPseudo())
+                return QStringLiteral("%1\n%2\n%3").arg(c->subject, c->author.nameEmail(), formatDate(c->author.time));
+            return c->subject;
         case AuthorColumn:
             if (role == Qt::ToolTipRole) return c->author.nameEmail();
             return c->author.name;
-        case DateColumn: return c->id.isPseudo() ? QString() : formatDate(c->author.time);
+        case DateColumn:
+            if (c->id.isPseudo()) return QString();
+            return role == Qt::ToolTipRole ? formatDate(c->author.time) : displayDate(c->author.time);
         }
     } else if (role == Qt::FontRole) {
         if (m_highlighted.contains(c->id)) {

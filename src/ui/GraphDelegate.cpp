@@ -209,7 +209,7 @@ void GraphDelegate::paint(QPainter *p, const QStyleOptionViewItem &optIn, const 
     p->setPen(Settings::mix(st.fgColor, bg, 0.4));
     QRect line2(graphRight, line1.bottom() + 1, cell.right() - 4 - graphRight, lineH);
     if (line2.width() <= 0) return;
-    const QString date = c->id.isPseudo() ? QString() : m_model->formatDate(c->author.time);
+    const QString date = c->id.isPseudo() ? QString() : m_model->displayDate(c->author.time);
     int authorWidth = line2.width();
     if (!date.isEmpty()) {
         const int dw = fm.horizontalAdvance(date);

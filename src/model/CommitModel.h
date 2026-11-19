@@ -52,6 +52,13 @@ public:
 
     void setDateFormat(const QString &fmt);
     QString formatDate(qint64 secs) const;
+    // Relative ("3 hours ago") or absolute dates in the list.
+    void setRelativeDates(bool on);
+    bool relativeDates() const { return m_relativeDates; }
+    // The date as the list shows it.
+    QString displayDate(qint64 secs) const;
+    // "just now", "5 minutes ago", "yesterday", "3 weeks ago", ...; empty for times in the future.
+    static QString relativeTime(qint64 secs, qint64 now);
 
 private:
     void updateGraph(bool final);
@@ -66,6 +73,7 @@ private:
     QSet<Oid> m_highlighted;
     Oid m_marked;
     QString m_dateFormat = QStringLiteral("yyyy-MM-dd HH:mm:ss");
+    bool m_relativeDates = false;
 };
 
 } // namespace gitq

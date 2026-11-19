@@ -60,8 +60,9 @@ bool CommitListView::viewportEvent(QEvent *e) {
                 tip = tr("Branch %1").arg(ref.name);
                 if (!ref.upstream.isEmpty()) {
                     QStringList parts;
-                    if (ref.ahead > 0) parts << tr("%n commit(s) ahead of", nullptr, ref.ahead);
-                    if (ref.behind > 0) parts << tr("%n commit(s) behind", nullptr, ref.behind);
+                    auto count = [this](int v) { return v == 1 ? tr("1 commit") : tr("%1 commits").arg(v); };
+                    if (ref.ahead > 0) parts << tr("%1 ahead of").arg(count(ref.ahead));
+                    if (ref.behind > 0) parts << tr("%1 behind").arg(count(ref.behind));
                     tip += QLatin1Char('\n') + (parts.isEmpty() ? tr("Up to date with %1").arg(ref.upstream)
                                                                  : parts.join(tr(" and ")) + QLatin1Char(' ') + ref.upstream);
                 }

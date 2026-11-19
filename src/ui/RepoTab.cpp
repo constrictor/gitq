@@ -77,6 +77,7 @@ RepoTab::RepoTab(Repository repo, const QStringList &args, const QString &prefix
 
     m_model = new CommitModel(this);
     m_model->setDateFormat(Settings::instance().dateFormat);
+    m_model->setRelativeDates(Settings::instance().relativeDates);
     m_loader = new LogLoader(this);
     m_searcher = new SearchWorker(this);
     m_fileModel = new FileListModel(this);
@@ -86,6 +87,14 @@ RepoTab::RepoTab(Repository repo, const QStringList &args, const QString &prefix
     QByteArray hdr = QSettings().value(QStringLiteral("window/listHeader")).toByteArray();
     if (!hdr.isEmpty()) m_list->header()->restoreState(hdr);
     applySettings();
+
+    // Relative dates age: repaint the list now and then.
+    auto *dateTimer = new QTimer(this);
+    dateTimer->setInterval(60 * 1000);
+    connect(dateTimer, &QTimer::timeout, this, [this] {
+        if (m_model->relativeDates() && isVisible()) m_list->viewport()->update();
+    });
+    dateTimer->start();
 
     connect(m_loader, &LogLoader::commitsLoaded, this, &RepoTab::onCommitsLoaded);
     connect(m_loader, &LogLoader::finished, this, &RepoTab::onLoadFinished);
@@ -1409,6 +1418,7 @@ void RepoTab::applySettings() {
     m_list->setFont(st.mainFont);
     m_diff->applyFonts();
     m_model->setDateFormat(st.dateFormat);
+    m_model->setRelativeDates(st.relativeDates);
     m_model->setRefs(m_refs, st.hideRemotes);
     QPalette pal = m_list->palette();
     pal.setColor(QPalette::Base, st.bgColor);
