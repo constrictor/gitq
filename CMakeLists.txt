@@ -56,6 +56,7 @@ add_library(gitq_ui STATIC
   src/ui/Glyphs.h src/ui/Glyphs.cpp
   src/ui/Choice.h
   src/ui/RefPills.h src/ui/RefPills.cpp
+  src/ui/Syntax.h src/ui/Syntax.cpp
   src/ui/DiffView.h src/ui/DiffView.cpp
   src/ui/ViewDialog.h src/ui/ViewDialog.cpp
   src/ui/PrefsDialog.h src/ui/PrefsDialog.cpp

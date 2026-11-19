@@ -70,6 +70,11 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
   the file being read sticks to the top of the pane, and clicking it goes back to the file's start.
   Removed and added lines have tinted backgrounds (the text keeps its colour, the +/- marks take the
   line's); in a removed line and the most similar added line the changed words get a stronger tint.
+  Code is syntax highlighted by a small built-in highlighter (keywords, types, strings, comments,
+  numbers, functions, preprocessor lines, markup tags) for C/C++, Java/Kotlin/C#, JavaScript/TypeScript,
+  Go, Rust, Swift, PHP, Python, shell, Ruby, Perl, Tcl, CMake, Make, SQL, Lua, JSON, XML/HTML, CSS and
+  config files; old and new sides are followed separately through block comments and multi-line
+  strings. Preferences can turn it off.
   A gutter shows old and new line numbers (the result's for merges; one column in Tree mode); clicking
   it selects the line, right-clicking it opens the line's menu.
 - Diff tool bar in one compact row: Diff / Old / New version, lines of context, ignore space change,

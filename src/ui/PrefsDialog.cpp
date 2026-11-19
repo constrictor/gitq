@@ -99,6 +99,7 @@ QWidget *PrefsDialog::generalPage() {
     intField(f, tr("Maximum # tags/heads to show"), m_s.maxRefs, 1, 1000);
     boolField(f, tr("Limit diffs to listed paths"), m_s.limitDiffs);
     boolField(f, tr("Wrap long lines in the diff pane"), m_s.wrapDiff);
+    boolField(f, tr("Syntax highlighting in the diff pane"), m_s.syntaxHighlighting);
     intField(f, tr("Tab spacing"), m_s.tabStop, 1, 20);
     textField(f, tr("External diff tool"), m_s.extDiffTool);
     textField(f, tr("Date format (Qt syntax)"), m_s.dateFormat);

@@ -3,6 +3,7 @@
 #include "Settings.h"
 #include "model/CommitModel.h"
 #include "ui/Glyphs.h"
+#include "ui/Syntax.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -198,6 +199,7 @@ protected:
             return f;
         };
         const int marks = n < m_view->m_markLen.size() ? m_view->m_markLen[n] : 0;
+        highlightSyntax(n, text, style, marks);
         switch (style) {
         case DiffView::OldStyle:
         case DiffView::NewStyle: {
@@ -227,11 +229,15 @@ protected:
         if (it == m_view->m_wordRanges.cend()) return;
         const bool colorWords = m_view->m_wordMode == DiffView::ColorWords;
         if (m_view->m_wordMode == DiffView::LineDiff) {
-            // Changed words of a changed line: a stronger tint of the line's background.
+            // Changed words of a changed line: a stronger tint of the line's background, keeping
+            // the syntax colours.
             for (const auto &r : *it) {
-                QTextCharFormat f;
-                f.setBackground(r.kind == DiffView::OldStyle ? DiffView::wordBg(true) : DiffView::wordBg(false));
-                setFormat(r.start, r.len, f);
+                const QColor bg = DiffView::wordBg(r.kind == DiffView::OldStyle);
+                for (int i = r.start; i < r.start + r.len && i < text.size(); ++i) {
+                    QTextCharFormat f = format(i);
+                    f.setBackground(bg);
+                    setFormat(i, 1, f);
+                }
             }
             return;
         }
@@ -243,7 +249,40 @@ protected:
     }
 
 private:
+    // Syntax colours of a code line. The block state follows constructs spanning lines (block
+    // comments, triple-quoted strings) separately for the old and new sides: removed lines continue
+    // the old side's state, added lines the new side's, context lines both.
+    void highlightSyntax(int n, const QString &text, quint8 style, int marks) {
+        setCurrentBlockState(0);
+        if (n >= m_view->m_meta.size() || m_view->m_wordMode != DiffView::LineDiff ||
+            !Settings::instance().syntaxHighlighting)
+            return;
+        const DiffLineInfo &meta = m_view->m_meta[n];
+        if (meta.kind.isNull() || (style != DiffView::OldStyle && style != DiffView::NewStyle && style != DiffView::PlainStyle))
+            return;
+        auto it = m_languages.constFind(meta.path);
+        if (it == m_languages.cend()) it = m_languages.insert(meta.path, Syntax::languageFor(meta.path));
+        if (!*it) return;
+        int prev = previousBlockState();
+        if (prev < 0) prev = 0;
+        int oldState = prev & 0xf, newState = (prev >> 4) & 0xf;
+        QList<Syntax::Span> spans;
+        if (meta.kind == QLatin1Char('-')) {
+            oldState = Syntax::highlightLine(**it, text, marks, oldState, &spans);
+        } else if (meta.kind == QLatin1Char('+')) {
+            newState = Syntax::highlightLine(**it, text, marks, newState, &spans);
+        } else {
+            oldState = newState = Syntax::highlightLine(**it, text, marks, newState, &spans);
+        }
+        setCurrentBlockState(oldState | (newState << 4));
+        QTextCharFormat colors[Syntax::TokenCount];
+        for (int t = 0; t < Syntax::TokenCount; ++t) colors[t].setForeground(Syntax::color(Syntax::Token(t)));
+        colors[Syntax::Comment].setFontItalic(true);
+        for (const Syntax::Span &s : std::as_const(spans)) setFormat(s.start, s.len, colors[s.token]);
+    }
+
     DiffView *m_view;
+    QHash<QString, const Syntax::Language *> m_languages;
 };
 
 DiffView::DiffView(QWidget *parent) : QPlainTextEdit(parent) {

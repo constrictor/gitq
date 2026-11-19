@@ -33,6 +33,7 @@ struct Settings {
     bool limitDiffs = true;      // limit diffs to the view's paths
     bool showNearTags = true;
     bool wrapDiff = false;
+    bool syntaxHighlighting = true;   // colour code in the diff pane
     int diffContext = 3;
     bool ignoreSpace = false;
     int wordDiff = 0;            // 0 line diff, 1 markup words, 2 color words
