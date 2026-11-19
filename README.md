@@ -65,7 +65,9 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
 - Details pane: a header card with the author's initials in a coloured circle, the subject as a heading,
   author and committer with relative and exact dates, the commit id (click to copy), the commit's ref
   labels, clickable Parent/Child links and Branches / Follows / Precedes (computed in the background);
-  then the message and the diff. Merges show a combined (`--cc`) diff.
+  then the message and the diff. Merges show a combined (`--cc`) diff. Each file starts with a header bar
+  (status badge, directory and file name, +added / −removed lines and a five-block bar); the header of
+  the file being read sticks to the top of the pane, and clicking it goes back to the file's start.
 - Diff tool bar in one compact row: Diff / Old / New version, lines of context, ignore space change,
   line / markup words / color words, diff search (finds as you type; arrows or Ctrl-R / Ctrl-S for the
   previous / next match); the ⋯ menu wraps long lines and chooses how submodule changes are shown.

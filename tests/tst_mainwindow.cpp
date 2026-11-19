@@ -13,6 +13,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QScrollBar>
 #include <QTextBlock>
 #include <QComboBox>
 #include <QFileInfo>
@@ -58,12 +59,13 @@ class TestMainWindow : public QObject {
     }
 
     QString diffText(QWidget *w) { return child<DiffView>(w, "diffView")->toPlainText(); }
+    QStringList diffFiles(QWidget *w) { return child<DiffView>(w, "diffView")->files(); }
 
     void selectId(QWidget *w, const QString &id) {
         auto *sha = child<QLineEdit>(w, "shaEdit");
         sha->setText(id);
         QMetaObject::invokeMethod(sha, "returnPressed");
-        QTRY_VERIFY(diffText(w).contains(QStringLiteral("----------")) || diffText(w).contains(QStringLiteral("Parent: ")));
+        QTRY_VERIFY(!diffFiles(w).isEmpty() || diffText(w).contains(QStringLiteral("Parent: ")));
     }
 
 private slots:
@@ -101,7 +103,7 @@ private slots:
         QCOMPARE(child<QLineEdit>(&w, "shaEdit")->text(), repo->rev("HEAD"));
         QVERIFY(diffText(&w).contains(QStringLiteral("Tester <tester@example.com>")));
         QVERIFY(diffText(&w).contains(QStringLiteral("After merge")));   // the subject heading
-        QVERIFY(diffText(&w).contains(QStringLiteral("---------- README ----------")));
+        QVERIFY(diffFiles(&w).contains(QStringLiteral("README")));
         QTRY_VERIFY(diffText(&w).contains(QStringLiteral("Branches: master")));
         QVERIFY(child<QLabel>(&w, "rowLabel")->text().contains(QStringLiteral("1 / 5")));
         shot(&w, QStringLiteral("01-head"));
@@ -207,7 +209,7 @@ private slots:
         QCOMPARE(fileRows(), (QStringList{QString(), "lib/sub"}));
         emit diff->submoduleToggled("lib/sub");
         QTRY_VERIFY(diffText(&w).contains("+two"));
-        QVERIFY(diffText(&w).contains("---------- lib/sub/x.c ----------"));
+        QVERIFY(diffFiles(&w).contains("lib/sub/x.c"));
         QVERIFY(diffText(&w).contains("[hide files]"));
         QCOMPARE(fileRows(), (QStringList{QString(), "lib/sub", "lib/sub/x.c"}));
         shot(&w, QStringLiteral("09-submodule"));
@@ -294,7 +296,7 @@ private slots:
         QCOMPARE(child<QLineEdit>(&w, "shaEdit")->text(), repo->rev("HEAD"));   // HEAD stays selected
         auto *list = child<QTreeView>(&w, "commitList");
         list->setCurrentIndex(model(&w)->index(0, 0));
-        QTRY_VERIFY(diffText(&w).contains(QStringLiteral("---------- README ----------")));
+        QTRY_VERIFY(diffFiles(&w).contains(QStringLiteral("README")));
         QVERIFY(diffText(&w).contains(QStringLiteral("+edited in work tree")));
         QVERIFY(diffText(&w).trimmed().startsWith(QStringLiteral("Local uncommitted changes")));
         repo->git({"checkout", "--", "README"});
@@ -331,6 +333,30 @@ private slots:
         QVERIFY(!list->header()->isSectionHidden(CommitModel::DateColumn));
         QVERIFY(list->header()->isVisible());
         QVERIFY(list->header()->sectionSize(CommitModel::AuthorColumn) > 0);
+    }
+
+    void fileHeaders() {
+        test::TestRepo r;
+        QByteArray big;
+        for (int i = 0; i < 200; ++i) big += "line " + QByteArray::number(i) + "\n";
+        r.commit("Two files", {{"a/long.txt", big}, {"b.txt", "b\n"}});
+        MainWindow w(r.path(), {});
+        w.resize(1200, 900);
+        w.show();
+        waitLoaded(&w);
+        auto *diff = child<DiffView>(&w, "diffView");
+        QTRY_COMPARE(diffFiles(&w), (QStringList{"a/long.txt", "b.txt"}));
+        const QColor bar = Settings::instance().fileSepBgColor;
+        auto topPixel = [&] { return diff->viewport()->grab().toImage().pixelColor(diff->viewport()->width() / 2, 2); };
+        QVERIFY(topPixel() != bar);   // the header card is at the top
+        // Scrolled into the middle of the first file, its header stays at the top.
+        QVERIFY(diff->scrollToLine("a/long.txt", 100, true));
+        QTRY_COMPARE(diff->fileAtTop(), QStringLiteral("a/long.txt"));
+        QCOMPARE(topPixel(), bar);
+        shot(&w, QStringLiteral("10-sticky-header"));
+        // A click on it goes back to the top of the file.
+        QTest::mouseClick(diff->viewport(), Qt::LeftButton, {}, QPoint(diff->viewport()->width() / 2, 4));
+        QTRY_VERIFY(diff->verticalScrollBar()->value() < 20);
     }
 
     void hoverRow() {

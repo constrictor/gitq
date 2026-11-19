@@ -11,6 +11,8 @@
 #include <QMap>
 #include <QPlainTextEdit>
 
+class QPainter;
+
 namespace gitq {
 
 struct DiffLineInfo {
@@ -48,6 +50,8 @@ public:
     void scrollToFile(const QString &path);
     void scrollToTop();
     QString fileAtTop() const;
+    // Paths of the files shown, in order.
+    QStringList files() const;
     DiffLineInfo lineInfoAt(const QPoint &viewportPos) const;
     // Scroll to the given line of a file's diff (new side when `newSide`), returns success.
     bool scrollToLine(const QString &path, int line, bool newSide);
@@ -73,6 +77,7 @@ signals:
 protected:
     void mouseMoveEvent(QMouseEvent *e) override;
     void mouseReleaseEvent(QMouseEvent *e) override;
+    void mousePressEvent(QMouseEvent *e) override;
     void contextMenuEvent(QContextMenuEvent *e) override;
     void paintEvent(QPaintEvent *e) override;
     bool viewportEvent(QEvent *e) override;
@@ -81,6 +86,15 @@ private:
     friend class DiffHighlighter;
     friend class HeaderObjects;
     enum Style : quint8 { HeaderStyle, PlainStyle, OldStyle, NewStyle, HunkStyle, FileSepStyle, ErrorStyle };
+    // A file's header bar: status badge, path, line counts.
+    struct FileHeader {
+        QString path;
+        QString title;      // path, or "old → new" for renames and copies
+        QChar status;       // A, M, D, R, C, T; null in Tree mode
+        int added = 0, removed = 0;
+        bool binary = false;
+        bool submodule = false;
+    };
     struct WordRange {
         int start;
         int len;
@@ -103,6 +117,10 @@ private:
     void appendLinkTo(QTextCursor &cur, const QString &label, const QString &href);
     void renderWordRun(const QStringList &dels, const QStringList &adds, const QString &path, int &oldNo, int &newNo);
     void updateExtraSelections();
+    // Paints a file header bar into `r`.
+    void paintFileHeader(QPainter *p, const QRectF &r, const FileHeader &h) const;
+    // The sticky header's rectangle and file at the top of the viewport (null rect if none).
+    QRectF stickyHeader(FileHeader *out = nullptr) const;
     void onScroll();
 
     Mode m_mode = ShowDiff;
@@ -112,7 +130,7 @@ private:
     QList<quint8> m_style;                  // per block
     QHash<int, QList<WordRange>> m_wordRanges;
     QStringList m_pending;                  // body lines not yet inserted
-    QMap<int, QString> m_fileStarts;        // block number -> path
+    QMap<int, FileHeader> m_fileStarts;     // block number of each file's header
     int m_headerEnd = 0;                    // block number where the comment ends
     int m_cardEnd = 0;                      // block number where the header card ends
     QString m_avatarText;                   // initials in the card's avatar (empty: none)

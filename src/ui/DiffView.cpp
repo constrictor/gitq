@@ -8,6 +8,7 @@
 #include <QClipboard>
 #include <QContextMenuEvent>
 #include <QHelpEvent>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPlainTextDocumentLayout>
 #include <QTextObjectInterface>
@@ -177,6 +178,17 @@ protected:
         case DiffView::NewStyle: setFormat(0, int(text.size()), fg(st.diffNewColor)); break;
         case DiffView::HunkStyle: setFormat(0, int(text.size()), fg(st.diffHunkColor)); break;
         case DiffView::ErrorStyle: setFormat(0, int(text.size()), fg(Qt::red)); break;
+        case DiffView::FileSepStyle: {
+            // Taller line for the header bar painted over it.
+            QTextCharFormat f;
+            QFont font = st.uiFont;
+            font.setBold(true);
+            if (font.pointSizeF() > 0) font.setPointSizeF(font.pointSizeF() * 1.35);
+            f.setFont(font);
+            f.setForeground(Qt::transparent);
+            setFormat(0, int(text.size()), f);
+            return;
+        }
         default: break;
         }
         auto it = m_view->m_wordRanges.constFind(n);
@@ -424,7 +436,7 @@ void DiffView::showNearby(const NearbyRefs &n, int maxRefs) {
     QHash<int, QList<WordRange>> words;
     for (auto it = m_wordRanges.cbegin(); it != m_wordRanges.cend(); ++it) words.insert(it.key() + k, it.value());
     m_wordRanges = words;
-    QMap<int, QString> shifted;
+    QMap<int, FileHeader> shifted;
     for (auto it = m_fileStarts.cbegin(); it != m_fileStarts.cend(); ++it) shifted.insert(it.key() + k, it.value());
     m_fileStarts = shifted;
     m_headerEnd += k;
@@ -452,6 +464,28 @@ void DiffView::paintEvent(QPaintEvent *e) {
         }
     }
     QPlainTextEdit::paintEvent(e);
+    {
+        // File header bars over their (transparent) text, and the sticky one at the top.
+        QPainter p(viewport());
+        const QPointF offset = contentOffset();
+        const int first = firstVisibleBlock().blockNumber();
+        for (auto it = m_fileStarts.lowerBound(first); it != m_fileStarts.cend(); ++it) {
+            const QTextBlock b = document()->findBlockByNumber(it.key());
+            if (!b.isValid()) break;
+            const QRectF r = blockBoundingGeometry(b).translated(offset);
+            if (r.top() > viewport()->height()) break;
+            paintFileHeader(&p, QRectF(0, r.top(), viewport()->width(), r.height()), it.value());
+        }
+        FileHeader h;
+        const QRectF sticky = stickyHeader(&h);
+        if (!sticky.isNull()) {
+            paintFileHeader(&p, sticky, h);
+            QLinearGradient shadow(0, sticky.bottom(), 0, sticky.bottom() + 4);
+            shadow.setColorAt(0, QColor(0, 0, 0, Settings::darkTheme() ? 90 : 40));
+            shadow.setColorAt(1, QColor(0, 0, 0, 0));
+            p.fillRect(QRectF(0, sticky.bottom(), viewport()->width(), 4), shadow);
+        }
+    }
     if (m_avatarText.isEmpty() || m_cardEnd < 3) return;
     // The avatar: the author's initials in a circle beside the subject and author lines.
     const QTextBlock subject = document()->findBlockByNumber(1), author = document()->findBlockByNumber(2);
@@ -473,6 +507,155 @@ void DiffView::paintEvent(QPaintEvent *e) {
     p.setFont(f);
     p.setPen(Qt::white);
     p.drawText(circle, Qt::AlignCenter, m_avatarText);
+}
+
+QRectF DiffView::stickyHeader(FileHeader *out) const {
+    const QTextBlock top = firstVisibleBlock();
+    if (!top.isValid() || m_fileStarts.isEmpty()) return {};
+    const QPointF offset = contentOffset();
+    // The header of the file the top line belongs to, unless that header is itself fully visible.
+    auto it = m_fileStarts.upperBound(top.blockNumber());
+    if (it == m_fileStarts.cbegin()) return {};
+    auto cur = std::prev(it);
+    const QTextBlock hb = document()->findBlockByNumber(cur.key());
+    if (!hb.isValid()) return {};
+    const QRectF hr = blockBoundingGeometry(hb).translated(offset);
+    if (hr.top() >= 0) return {};
+    double y = 0;
+    if (it != m_fileStarts.cend()) {   // pushed up by the next file's header
+        const QTextBlock nb = document()->findBlockByNumber(it.key());
+        if (nb.isValid()) y = qMin(0.0, blockBoundingGeometry(nb).translated(offset).top() - hr.height());
+    }
+    if (out) *out = cur.value();
+    return QRectF(0, y, viewport()->width(), hr.height());
+}
+
+void DiffView::paintFileHeader(QPainter *p, const QRectF &r, const FileHeader &h) const {
+    const Settings &st = Settings::instance();
+    const QColor bg = st.fileSepBgColor, fg = st.fgColor;
+    const QColor dim = Settings::mix(fg, bg, 0.45);
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing, true);
+    p->fillRect(r, bg);
+    p->setPen(Settings::mix(bg, fg, 0.18));
+    p->drawLine(QPointF(r.left(), r.top() + 0.5), QPointF(r.right(), r.top() + 0.5));
+    p->drawLine(QPointF(r.left(), r.bottom() - 0.5), QPointF(r.right(), r.bottom() - 0.5));
+
+    QFont font = st.uiFont;
+    const QFontMetricsF fm(font);
+    double x = r.left() + 8 + document()->documentMargin();
+    const double cy = r.center().y();
+
+    // Status badge.
+    if (!h.status.isNull()) {
+        QColor c;
+        switch (h.status.unicode()) {
+        case 'A': c = QColor(0x2e, 0x9d, 0x4f); break;
+        case 'D': c = QColor(0xd9, 0x3f, 0x3f); break;
+        case 'R': c = QColor(0x8e, 0x5c, 0xd9); break;
+        case 'C': c = QColor(0x13, 0x9c, 0x9c); break;
+        case 'T': c = QColor(0x80, 0x80, 0x80); break;
+        default: c = QColor(0xd0, 0x8a, 0x2e); break;
+        }
+        const double s = qMin(r.height() - 6, fm.height() + 2);
+        const QRectF badge(x, cy - s / 2, s, s);
+        p->setPen(Qt::NoPen);
+        p->setBrush(c);
+        p->drawRoundedRect(badge, s * 0.25, s * 0.25);
+        QFont bf = font;
+        bf.setBold(true);
+        bf.setPixelSize(qMax(7, int(s * 0.62)));
+        p->setFont(bf);
+        p->setPen(Qt::white);
+        p->drawText(badge, Qt::AlignCenter, QString(h.status));
+        x += s + 8;
+    }
+
+    // Right side: line counts and a five-block bar, or "binary".
+    double right = r.right() - 10;
+    p->setFont(font);
+    if (h.binary) {
+        const QString t = tr("binary");
+        right -= fm.horizontalAdvance(t);
+        p->setPen(dim);
+        p->drawText(QRectF(right, r.top(), fm.horizontalAdvance(t) + 1, r.height()), Qt::AlignVCenter, t);
+        right -= 10;
+    } else if (h.added || h.removed) {
+        const QColor plus = Settings::darkTheme() ? QColor(0x56, 0xd3, 0x64) : QColor(0x1f, 0x88, 0x3d);
+        const QColor minus = Settings::darkTheme() ? QColor(0xff, 0x7b, 0x72) : QColor(0xcf, 0x22, 0x2e);
+        if (!h.submodule) {
+            const int total = h.added + h.removed;
+            const int green = total ? qRound(5.0 * h.added / total) : 0;
+            const double bs = qMax(5.0, fm.height() * 0.5);
+            for (int i = 4; i >= 0; --i) {
+                right -= bs;
+                const QRectF sq(right, cy - bs / 2, bs - 1.5, bs - 1.5);
+                p->fillRect(sq, i < green ? plus : minus);
+                right -= 0.5;
+            }
+            right -= 8;
+        }
+        const QString m = h.submodule ? tr("%1 commits").arg(h.added + h.removed) : QStringLiteral("−%1").arg(h.removed);
+        const QString a = QStringLiteral("+%1").arg(h.added);
+        if (h.submodule) {
+            right -= fm.horizontalAdvance(m);
+            p->setPen(dim);
+            p->drawText(QRectF(right, r.top(), fm.horizontalAdvance(m) + 1, r.height()), Qt::AlignVCenter, m);
+        } else {
+            right -= fm.horizontalAdvance(m);
+            p->setPen(minus);
+            p->drawText(QRectF(right, r.top(), fm.horizontalAdvance(m) + 1, r.height()), Qt::AlignVCenter, m);
+            right -= fm.horizontalAdvance(a) + 6;
+            p->setPen(plus);
+            p->drawText(QRectF(right, r.top(), fm.horizontalAdvance(a) + 1, r.height()), Qt::AlignVCenter, a);
+        }
+        right -= 12;
+    }
+    if (h.submodule) {
+        const QString t = tr("submodule");
+        right -= fm.horizontalAdvance(t);
+        p->setPen(dim);
+        p->drawText(QRectF(right, r.top(), fm.horizontalAdvance(t) + 1, r.height()), Qt::AlignVCenter, t);
+        right -= 12;
+    }
+
+    // The path: directory dimmed, file name in bold.
+    const double avail = right - x;
+    if (avail > 10) {
+        QFont bold = font;
+        bold.setBold(true);
+        const QFontMetricsF bm(bold);
+        const int slash = int(h.title.lastIndexOf(QLatin1Char('/')));
+        QString dir = h.title.contains(QStringLiteral(" → ")) || slash < 0 ? QString() : h.title.left(slash + 1);
+        QString name = dir.isEmpty() ? h.title : h.title.mid(slash + 1);
+        const double nw = bm.horizontalAdvance(name);
+        if (nw >= avail) {
+            name = bm.elidedText(name, Qt::ElideLeft, avail);
+            dir.clear();
+        } else {
+            dir = fm.elidedText(dir, Qt::ElideLeft, avail - nw);
+        }
+        p->setFont(font);
+        p->setPen(dim);
+        const double dw = fm.horizontalAdvance(dir);
+        p->drawText(QRectF(x, r.top(), dw + 1, r.height()), Qt::AlignVCenter, dir);
+        p->setFont(bold);
+        p->setPen(fg);
+        p->drawText(QRectF(x + dw, r.top(), avail - dw, r.height()), Qt::AlignVCenter, name);
+    }
+    p->restore();
+}
+
+void DiffView::mousePressEvent(QMouseEvent *e) {
+    // A click on the sticky header goes to the top of its file.
+    FileHeader h;
+    const QRectF sticky = stickyHeader(&h);
+    if (e->button() == Qt::LeftButton && !sticky.isNull() && sticky.contains(e->position())) {
+        scrollToFile(h.path);
+        e->accept();
+        return;
+    }
+    QPlainTextEdit::mousePressEvent(e);
 }
 
 bool DiffView::viewportEvent(QEvent *e) {
@@ -525,15 +708,30 @@ void DiffView::flushBody() {
 }
 
 void DiffView::renderFile(const FileDiff &f) {
-    QString title = f.status == QLatin1Char('R') || f.status == QLatin1Char('C')
-                        ? QStringLiteral("%1 -> %2").arg(f.oldPath, f.newPath)
-                        : f.path();
-    m_fileStarts.insert(int(m_meta.size()), f.path());
+    const int n = qMax(1, f.numParents);
+    FileHeader header;
+    header.path = f.path();
+    header.title = f.status == QLatin1Char('R') || f.status == QLatin1Char('C')
+                       ? QStringLiteral("%1 → %2").arg(f.oldPath, f.newPath)
+                       : f.path();
+    header.status = f.status;
+    header.binary = f.binary;
+    bool hunks = false;
+    for (const QString &line : f.lines) {
+        if (!hunks) {
+            hunks = line.startsWith(QLatin1String("@@"));
+            continue;
+        }
+        if (line.startsWith(QLatin1String("@@"))) continue;
+        const QString marks = line.left(n);
+        if (marks.contains(QLatin1Char('+'))) ++header.added;
+        else if (marks.contains(QLatin1Char('-'))) ++header.removed;
+    }
+    m_fileStarts.insert(int(m_meta.size()), header);
     DiffLineInfo fileMeta;
     fileMeta.path = f.path();
-    addBodyLine(QStringLiteral("---------- %1 ----------").arg(title), FileSepStyle, fileMeta);
+    addBodyLine(header.title, FileSepStyle, fileMeta);
 
-    const int n = qMax(1, f.numParents);
     bool inHunks = false;
     int oldNo = 0, newNo = 0;
     QStringList dels, adds;
@@ -598,10 +796,16 @@ void DiffView::renderFile(const FileDiff &f) {
 // A submodule entry: what it moved from and to, the commits in between (as links that open the
 // submodule in a tab) and links to show its files and to open it.
 void DiffView::renderSubmodule(const SubmoduleChange &s) {
-    m_fileStarts.insert(int(m_meta.size()), s.path);
+    FileHeader header;
+    header.path = header.title = s.path;
+    header.status = s.status;
+    header.submodule = true;
+    header.added = int(s.added.size()) + s.moreAdded;
+    header.removed = int(s.removed.size()) + s.moreRemoved;
+    m_fileStarts.insert(int(m_meta.size()), header);
     DiffLineInfo meta;
     meta.path = s.path;
-    addBodyLine(QStringLiteral("---------- %1 (submodule) ----------").arg(s.path), FileSepStyle, meta);
+    addBodyLine(s.path, FileSepStyle, meta);
     flushBody();
 
     const QTextCharFormat plain = plainFormat();
@@ -712,8 +916,10 @@ void DiffView::showFileContents(const QString &path, const QString &text) {
     clearAll();
     DiffLineInfo meta;
     meta.path = path;
-    m_fileStarts.insert(0, path);
-    addBodyLine(QStringLiteral("---------- %1 ----------").arg(path), FileSepStyle, meta);
+    FileHeader header;
+    header.path = header.title = path;
+    m_fileStarts.insert(0, header);
+    addBodyLine(path, FileSepStyle, meta);
     QStringList lines = text.split(QLatin1Char('\n'));
     if (!lines.isEmpty() && lines.last().isEmpty()) lines.removeLast();
     int no = 1;
@@ -738,7 +944,7 @@ void DiffView::scrollToTop() {
 
 void DiffView::scrollToFile(const QString &path) {
     for (auto it = m_fileStarts.cbegin(); it != m_fileStarts.cend(); ++it) {
-        if (it.value() != path) continue;
+        if (it.value().path != path) continue;
         QTextBlock b = document()->findBlockByNumber(it.key());
         verticalScrollBar()->setValue(verticalScrollBar()->maximum());
         QTextCursor c(b);
@@ -763,15 +969,22 @@ bool DiffView::scrollToLine(const QString &path, int line, bool newSide) {
     return false;
 }
 
+QStringList DiffView::files() const {
+    QStringList out;
+    for (const FileHeader &h : m_fileStarts) out << h.path;
+    return out;
+}
+
 QString DiffView::fileAtTop() const {
     int top = firstVisibleBlock().blockNumber();
     auto it = m_fileStarts.upperBound(top);
     if (it == m_fileStarts.cbegin()) return {};
     --it;
-    return it.value();
+    return it.value().path;
 }
 
 void DiffView::onScroll() {
+    viewport()->update();   // the sticky header must not be scrolled along with the text
     QString f = fileAtTop();
     if (f != m_lastTopFile) {
         m_lastTopFile = f;
@@ -823,13 +1036,6 @@ void DiffView::setFindSpec(const FindSpec &spec) {
 void DiffView::updateExtraSelections() {
     const Settings &st = Settings::instance();
     QList<QTextEdit::ExtraSelection> sels;
-    for (auto it = m_fileStarts.cbegin(); it != m_fileStarts.cend(); ++it) {
-        QTextEdit::ExtraSelection s;
-        s.cursor = QTextCursor(document()->findBlockByNumber(it.key()));
-        s.format.setBackground(st.fileSepBgColor);
-        s.format.setProperty(QTextFormat::FullWidthSelection, true);
-        sels << s;
-    }
     if (m_findSpec.type == FindSpec::Containing && !m_findSpec.text.isEmpty()) {
         QTextBlock b = document()->begin();
         for (int i = 0; b.isValid() && i < m_headerEnd; ++i, b = b.next()) {

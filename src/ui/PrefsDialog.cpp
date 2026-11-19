@@ -123,7 +123,7 @@ QWidget *PrefsDialog::colorsPage() {
     colorField(f, tr("Local branch label"), m_s.headBgColor, this);
     colorField(f, tr("Remote branch label"), m_s.remoteBgColor, this);
     colorField(f, tr("Tag label"), m_s.tagBgColor, this);
-    colorField(f, tr("File separator bg"), m_s.fileSepBgColor, this);
+    colorField(f, tr("File header bg"), m_s.fileSepBgColor, this);
     colorField(f, tr("Links"), m_s.linkColor, this);
     return w;
 }

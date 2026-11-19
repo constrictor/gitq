@@ -62,7 +62,7 @@ struct Settings {
     QColor remoteBgColor = QColor(0xff, 0xe3, 0xc4);     // remote branches
     QColor tagBgColor = QColor(0xff, 0xf0, 0xa8);        // tags
     QColor otherRefBgColor = QColor(0xdf, 0xe2, 0xff);   // other refs
-    QColor fileSepBgColor = QColor(0xaa, 0xaa, 0xaa);
+    QColor fileSepBgColor = QColor(0xee, 0xf0, 0xf3);   // file header bars in the diff
     QColor foundBgColor = Qt::yellow;
     QColor currentSearchBgColor = QColor(0xff, 0xa5, 0x00);
     QColor linkColor = Qt::blue;

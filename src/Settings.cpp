@@ -69,7 +69,7 @@ Settings Settings::themeDefaults() {
     d.diffOldBg = mix(d.bgColor, QColor(0xff, 0x40, 0x40), 0.15);
     d.diffNewBg = mix(d.bgColor, QColor(0x40, 0xff, 0x40), 0.12);
     d.markBgColor = mix(d.bgColor, QColor(0x80, 0x80, 0xff), 0.3);
-    d.fileSepBgColor = mix(d.bgColor, d.fgColor, 0.3);
+    d.fileSepBgColor = mix(d.bgColor, d.fgColor, 0.1);
     d.foundBgColor = QColor(0x80, 0x6c, 0x00);
     d.currentSearchBgColor = QColor(0xa8, 0x55, 0x00);
     d.linkColor = QColor(0x6c, 0xa8, 0xff);
@@ -88,6 +88,7 @@ Settings Settings::legacyDefaults() {
     d.remoteBgColor = QColor(0xff, 0xdd, 0xaa);
     d.tagBgColor = Qt::yellow;
     d.otherRefBgColor = QColor(0xdd, 0xdd, 0xff);
+    d.fileSepBgColor = QColor(0xaa, 0xaa, 0xaa);
     return d;
 }
 
