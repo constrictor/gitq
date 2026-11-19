@@ -9,6 +9,7 @@
 #include <QContextMenuEvent>
 #include <QHelpEvent>
 #include <QMouseEvent>
+#include <QResizeEvent>
 #include <QPainter>
 #include <QPlainTextDocumentLayout>
 #include <QTextObjectInterface>
@@ -156,6 +157,29 @@ private:
     DiffView *m_view;
 };
 
+// The line numbers left of the diff; painted by the view, which knows the blocks.
+class LineGutter : public QWidget {
+public:
+    explicit LineGutter(DiffView *view) : QWidget(view), m_view(view) {}
+
+protected:
+    void paintEvent(QPaintEvent *e) override { m_view->paintGutter(e); }
+    void contextMenuEvent(QContextMenuEvent *e) override {
+        emit m_view->diffContextMenu(m_view->lineInfoAt(QPoint(0, e->pos().y())), e->globalPos());
+    }
+    void mousePressEvent(QMouseEvent *e) override {
+        // Select the line, like clicking at the start of it would.
+        if (e->button() != Qt::LeftButton) return;
+        QTextCursor c = m_view->cursorForPosition(QPoint(0, e->pos().y()));
+        c.movePosition(QTextCursor::StartOfBlock);
+        c.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+        m_view->setTextCursor(c);
+    }
+
+private:
+    DiffView *m_view;
+};
+
 // Colours body lines from the per-block styles recorded while rendering.
 class DiffHighlighter : public QSyntaxHighlighter {
 public:
@@ -209,6 +233,8 @@ DiffView::DiffView(QWidget *parent) : QPlainTextEdit(parent) {
     document()->setDocumentLayout(new CenteredObjectLayout(document()));
     document()->documentLayout()->registerHandler(kObjectType, new HeaderObjects(this));
     new DiffHighlighter(this);
+    m_gutter = new LineGutter(this);
+    connect(this, &QPlainTextEdit::updateRequest, m_gutter, [this] { m_gutter->update(); });
     setReadOnly(true);
     setUndoRedoEnabled(false);
     setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
@@ -240,10 +266,12 @@ void DiffView::clearAll() {
     m_avatarText.clear();
     m_cardPills.clear();
     m_cardId.clear();
+    m_singleNumberColumn = false;
     m_nearbyBlock = -1;
     m_lastTopFile.clear();
     m_currentSearchHit = QTextCursor();
     setExtraSelections({});
+    updateGutter();
 }
 
 void DiffView::appendLine(const QString &text, const QTextCharFormat &fmt, const DiffLineInfo &meta,
@@ -444,6 +472,89 @@ void DiffView::showNearby(const NearbyRefs &n, int maxRefs) {
     m_nearbyBlock = -1;
     verticalScrollBar()->setValue(keep);
     updateExtraSelections();
+}
+
+int DiffView::gutterWidth() const {
+    if (m_gutterDigits == 0) return 0;
+    const int digit = QFontMetrics(Settings::instance().textFont).horizontalAdvance(QLatin1Char('9'));
+    const int column = m_gutterDigits * digit + 10;
+    return (m_singleNumberColumn ? column : 2 * column) + 6;
+}
+
+void DiffView::updateGutter() {
+    int maxLine = 0;
+    for (const DiffLineInfo &m : std::as_const(m_meta)) maxLine = qMax(maxLine, qMax(m.oldLine, m.newLine));
+    m_gutterDigits = maxLine > 0 ? qMax(3, int(QString::number(maxLine).size())) : 0;
+    setViewportMargins(gutterWidth(), 0, 0, 0);
+    const QRect cr = contentsRect();
+    m_gutter->setGeometry(cr.left(), cr.top(), gutterWidth(), cr.height());
+    m_gutter->setVisible(m_gutterDigits > 0);
+    m_gutter->update();
+}
+
+void DiffView::resizeEvent(QResizeEvent *e) {
+    QPlainTextEdit::resizeEvent(e);
+    const QRect cr = contentsRect();
+    m_gutter->setGeometry(cr.left(), cr.top(), gutterWidth(), cr.height());
+}
+
+void DiffView::paintGutter(QPaintEvent *e) {
+    const Settings &st = Settings::instance();
+    QPainter p(m_gutter);
+    const int w = m_gutter->width();
+    const QColor gutterBg = Settings::mix(st.bgColor, st.fgColor, Settings::darkTheme() ? 0.04 : 0.025);
+    p.fillRect(e->rect(), gutterBg);
+    // The separator from the text; the card and header bars, painted next, run across it.
+    p.setPen(Settings::mix(gutterBg, st.fgColor, 0.12));
+    p.drawLine(QPointF(w - 0.5, e->rect().top()), QPointF(w - 0.5, e->rect().bottom() + 1));
+    const QColor cardBg = Settings::mix(st.bgColor, st.fgColor, Settings::darkTheme() ? 0.06 : 0.035);
+    const QColor number = Settings::mix(st.fgColor, st.bgColor, 0.55);
+    const QFont font = st.textFont;
+    p.setFont(font);
+    const int digit = QFontMetrics(font).horizontalAdvance(QLatin1Char('9'));
+    const int column = m_gutterDigits * digit + 10;
+    const QPointF offset = contentOffset();
+    auto headerBar = [&](const QRectF &r) {
+        p.fillRect(r, st.fileSepBgColor);
+        p.setPen(Settings::mix(st.fileSepBgColor, st.fgColor, 0.18));
+        p.drawLine(QPointF(0, r.top() + 0.5), QPointF(w, r.top() + 0.5));
+        p.drawLine(QPointF(0, r.bottom() - 0.5), QPointF(w, r.bottom() - 0.5));
+    };
+    for (QTextBlock b = firstVisibleBlock(); b.isValid(); b = b.next()) {
+        const QRectF r = blockBoundingGeometry(b).translated(offset);
+        if (r.top() > e->rect().bottom()) break;
+        const QRectF row(0, r.top(), w, r.height());
+        const int n = b.blockNumber();
+        if (n < m_cardEnd) {
+            p.fillRect(row, cardBg);
+            if (n == m_cardEnd - 1) {
+                p.setPen(Settings::mix(cardBg, st.fgColor, 0.15));
+                p.drawLine(QPointF(0, r.bottom() - 0.5), QPointF(w, r.bottom() - 0.5));
+            }
+            continue;
+        }
+        if (m_fileStarts.contains(n)) {
+            headerBar(row);
+            continue;
+        }
+        if (n >= m_meta.size() || m_meta[n].kind.isNull()) continue;
+        const DiffLineInfo &m = m_meta[n];
+        p.setPen(number);
+        const QFontMetrics fm(font);
+        const int lineH = fm.height();
+        const QRectF first(0, r.top(), column - 4, lineH);
+        if (m_singleNumberColumn) {
+            p.drawText(first, Qt::AlignRight | Qt::AlignVCenter, QString::number(m.newLine));
+        } else {
+            if (m.oldLine > 0) p.drawText(first, Qt::AlignRight | Qt::AlignVCenter, QString::number(m.oldLine));
+            if (m.newLine > 0)
+                p.drawText(QRectF(column, r.top(), column - 4, lineH), Qt::AlignRight | Qt::AlignVCenter,
+                           QString::number(m.newLine));
+        }
+    }
+    FileHeader h;
+    const QRectF sticky = stickyHeader(&h);
+    if (!sticky.isNull()) headerBar(QRectF(0, sticky.top(), w, sticky.height()));
 }
 
 void DiffView::paintEvent(QPaintEvent *e) {
@@ -685,6 +796,7 @@ void DiffView::appendDiff(const DiffResult &diff) {
             renderFile(f);
     }
     flushBody();
+    updateGutter();
     verticalScrollBar()->setValue(keep);
     updateExtraSelections();
     onScroll();
@@ -761,6 +873,10 @@ void DiffView::renderFile(const FileDiff &f) {
             if (m.hasMatch()) {
                 oldNo = m.captured(1).toInt();
                 newNo = m.captured(2).toInt();
+            } else if (n > 1) {   // combined: "@@@ -a,b -c,d +e,f @@@", only the result's lines count
+                static const QRegularExpression plus(QStringLiteral(" \\+(\\d+)(?:,\\d+)? @@"));
+                auto pm = plus.match(line);
+                if (pm.hasMatch()) newNo = pm.captured(1).toInt();
             }
             addBodyLine(line, HunkStyle, fileMeta);
             continue;
@@ -784,6 +900,8 @@ void DiffView::renderFile(const FileDiff &f) {
         if (n == 1) {
             if (!isAdd) meta.oldLine = oldNo++;
             if (!isDel) meta.newLine = newNo++;
+        } else if (!isDel) {
+            meta.newLine = newNo++;
         }
         if (m_mode == ShowOld && isAdd && !isDel) continue;
         if (m_mode == ShowNew && isDel) continue;
@@ -930,7 +1048,9 @@ void DiffView::showFileContents(const QString &path, const QString &text) {
         m.oldLine = m.newLine = no++;
         addBodyLine(l, PlainStyle, m);
     }
+    m_singleNumberColumn = true;
     flushBody();
+    updateGutter();
     updateExtraSelections();
     scrollToTop();
 }

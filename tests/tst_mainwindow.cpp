@@ -133,6 +133,8 @@ private slots:
         QTRY_VERIFY(diffText(&w).contains(QStringLiteral("@@@")));
         QVERIFY(diffText(&w).contains(QStringLiteral("++int x = 4;")));
         QVERIFY(diffText(&w).contains(QStringLiteral("Parent: ")));
+        // Combined diffs number the merge result's lines (for the gutter, blame and line origin).
+        QVERIFY(child<DiffView>(&w, "diffView")->scrollToLine(QStringLiteral("src/main.c"), 2, true));
         shot(&w, QStringLiteral("02-merge"));
     }
 

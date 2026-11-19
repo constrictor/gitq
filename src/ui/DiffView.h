@@ -80,11 +80,13 @@ protected:
     void mousePressEvent(QMouseEvent *e) override;
     void contextMenuEvent(QContextMenuEvent *e) override;
     void paintEvent(QPaintEvent *e) override;
+    void resizeEvent(QResizeEvent *e) override;
     bool viewportEvent(QEvent *e) override;
 
 private:
     friend class DiffHighlighter;
     friend class HeaderObjects;
+    friend class LineGutter;
     enum Style : quint8 { HeaderStyle, PlainStyle, OldStyle, NewStyle, HunkStyle, FileSepStyle, ErrorStyle };
     // A file's header bar: status badge, path, line counts.
     struct FileHeader {
@@ -117,6 +119,10 @@ private:
     void appendLinkTo(QTextCursor &cur, const QString &label, const QString &href);
     void renderWordRun(const QStringList &dels, const QStringList &adds, const QString &path, int &oldNo, int &newNo);
     void updateExtraSelections();
+    // Line number gutter left of the text.
+    int gutterWidth() const;
+    void updateGutter();
+    void paintGutter(QPaintEvent *e);
     // Paints a file header bar into `r`.
     void paintFileHeader(QPainter *p, const QRectF &r, const FileHeader &h) const;
     // The sticky header's rectangle and file at the top of the viewport (null rect if none).
@@ -137,6 +143,9 @@ private:
     QColor m_avatarColor;
     QList<RefPill> m_cardPills;             // ref labels in the card
     QString m_cardId;                       // full id shown in the card's id chip
+    QWidget *m_gutter = nullptr;
+    int m_gutterDigits = 0;                 // 0: no line numbers to show
+    bool m_singleNumberColumn = false;      // file contents (Tree mode): one number per line
     int m_nearbyBlock = -1;                 // block number where nearby refs are inserted
     QString m_searchText;
     FindSpec m_findSpec;
