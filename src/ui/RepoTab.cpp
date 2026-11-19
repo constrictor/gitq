@@ -8,6 +8,7 @@
 #include "ui/Choice.h"
 #include "ui/CommitListView.h"
 #include "ui/Dialogs.h"
+#include "ui/FileListDelegate.h"
 #include "ui/Glyphs.h"
 #include "ui/GraphDelegate.h"
 #include "ui/ViewDialog.h"
@@ -413,18 +414,43 @@ void RepoTab::buildUi() {
     auto *rl = new QVBoxLayout(m_filesPane);
     rl->setContentsMargins(0, 0, 0, 0);
     auto *rbar = new QHBoxLayout;
-    m_patchMode = new QRadioButton(tr("Patch"));
-    m_treeMode = new QRadioButton(tr("Tree"));
-    m_treeMode->setObjectName(QStringLiteral("treeMode"));
-    m_patchMode->setObjectName(QStringLiteral("patchMode"));
+    rbar->setContentsMargins(2, 2, 2, 0);
+    rbar->setSpacing(0);
+    // The files changed by the commit, or all files of its tree (segmented buttons).
+    auto *fileModes = new QButtonGroup(m_filesPane);
+    auto fileModeButton = [&](const QString &text, const QString &tip, const char *name) {
+        auto *b = new QToolButton;
+        b->setText(text);
+        b->setToolTip(tip);
+        b->setObjectName(QLatin1String(name));
+        b->setCheckable(true);
+        fileModes->addButton(b);
+        rbar->addWidget(b);
+        return b;
+    };
+    m_patchMode = fileModeButton(tr("Patch"), tr("The files the commit changes"), "patchMode");
+    m_treeMode = fileModeButton(tr("Tree"), tr("All files of the commit"), "treeMode");
     m_patchMode->setChecked(true);
-    rbar->addWidget(m_patchMode);
-    rbar->addWidget(m_treeMode);
     rbar->addStretch(1);
+    auto *group = new QToolButton;
+    group->setObjectName(QStringLiteral("groupFiles"));
+    group->setIcon(glyphIcon(Glyph::Folder));
+    group->setAutoRaise(true);
+    group->setCheckable(true);
+    group->setChecked(Settings::instance().groupFiles);
+    group->setToolTip(tr("Group by folder"));
+    rbar->addWidget(group);
     rl->addLayout(rbar);
+    m_fileModel->setGrouped(Settings::instance().groupFiles);
+    connect(group, &QToolButton::toggled, this, [this](bool on) {
+        Settings::instance().groupFiles = on;
+        m_fileModel->setGrouped(on);
+    });
     m_files = new QListView;
     m_files->setObjectName(QStringLiteral("fileList"));
     m_files->setModel(m_fileModel);
+    m_files->setItemDelegate(new FileListDelegate(m_files));
+    m_files->setMouseTracking(true);
     m_files->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_files->setContextMenuPolicy(Qt::CustomContextMenu);
     m_files->setUniformItemSizes(true);
@@ -472,7 +498,7 @@ void RepoTab::buildUi() {
         connect(b, &QToolButton::toggled, this, [this, redisplay](bool on) {
             if (on) redisplay();
         });
-    connect(m_patchMode, &QRadioButton::toggled, this, [this](bool) { fillFileList(); });
+    connect(m_patchMode, &QToolButton::toggled, this, [this](bool) { fillFileList(); });
 
     connect(m_files, &QListView::clicked, this, &RepoTab::onFileClicked);
     connect(m_files, &QListView::customContextMenuRequested, this, &RepoTab::fileMenu);
@@ -531,6 +557,7 @@ void RepoTab::buildShortcuts() {
         QString cur = m_diff->fileAtTop();
         int idx = cur.isEmpty() ? 0 : m_fileModel->rowOfPath(cur);
         int target = idx + dir;
+        while (target >= 0 && target < entries.size() && !entries[target].folder.isEmpty()) target += dir;   // folder rows
         if (target < 0 || target >= entries.size()) return;
         if (entries[target].path.isEmpty()) m_diff->scrollToTop();
         else m_diff->scrollToFile(entries[target].path);
@@ -894,7 +921,12 @@ void RepoTab::fillFileList() {
         return;
     }
     QList<FileListModel::Entry> entries;
-    for (const FileDiff &f : m_lastDiff.files) entries.append({f.path(), f.status});
+    for (const FileDiff &f : m_lastDiff.files) {
+        FileListModel::Entry e{f.path(), f.status};
+        e.binary = f.binary;
+        if (f.submodule < 0) f.countChanges(&e.added, &e.removed);
+        entries.append(e);
+    }
     m_fileModel->setEntries(entries, true);
     QSet<QString> hl;
     if (m_findSpec.type == FindSpec::TouchingPaths && !m_findSpec.text.isEmpty()) {
@@ -907,6 +939,12 @@ void RepoTab::fillFileList() {
 
 void RepoTab::onFileClicked(const QModelIndex &idx) {
     QString path = idx.data(FileListModel::PathRole).toString();
+    if (idx.data(FileListModel::IsFolderRole).toBool()) {   // its first file
+        const QModelIndex next = idx.sibling(idx.row() + 1, 0);
+        if (!next.isValid() || next.data(FileListModel::IsFolderRole).toBool()) return;
+        path = next.data(FileListModel::PathRole).toString();
+        if (m_treeMode->isChecked()) return;
+    }
     if (m_treeMode->isChecked()) {
         if (path.isEmpty()) return;
         QByteArray data = DiffEngine::fileContents(m_repo, m_selected, path);

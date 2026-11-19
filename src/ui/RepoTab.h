@@ -196,7 +196,7 @@ private:
     Choice *m_wordDiff;
     Choice *m_submoduleMode;
     DiffView *m_diff;
-    QRadioButton *m_patchMode, *m_treeMode;
+    QToolButton *m_patchMode, *m_treeMode;
     QListView *m_files;
     FileListModel *m_fileModel;
 

@@ -67,6 +67,8 @@ struct FileDiff {
     QString inSubmodule;              // innermost submodule containing this file (empty: none)
 
     QString path() const { return newPath.isEmpty() ? oldPath : newPath; }
+    // Numbers of added and removed lines (for combined diffs: lines added / removed against any parent).
+    void countChanges(int *added, int *removed) const;
 };
 
 struct DiffResult {

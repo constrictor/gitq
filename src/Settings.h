@@ -35,6 +35,7 @@ struct Settings {
     bool wrapDiff = false;
     bool syntaxHighlighting = true;   // colour code in the diff pane
     bool sideBySide = false;          // diff pane: old and new side by side
+    bool groupFiles = false;          // file list: grouped by folder
     int diffContext = 3;
     bool ignoreSpace = false;
     int wordDiff = 0;            // 0 line diff, 1 markup words, 2 color words

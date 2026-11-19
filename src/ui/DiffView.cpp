@@ -878,26 +878,9 @@ void DiffView::paintFileHeader(QPainter *p, const QRectF &r, const FileHeader &h
 
     // Status badge.
     if (!h.status.isNull()) {
-        QColor c;
-        switch (h.status.unicode()) {
-        case 'A': c = QColor(0x2e, 0x9d, 0x4f); break;
-        case 'D': c = QColor(0xd9, 0x3f, 0x3f); break;
-        case 'R': c = QColor(0x8e, 0x5c, 0xd9); break;
-        case 'C': c = QColor(0x13, 0x9c, 0x9c); break;
-        case 'T': c = QColor(0x80, 0x80, 0x80); break;
-        default: c = QColor(0xd0, 0x8a, 0x2e); break;
-        }
         const double s = qMin(r.height() - 6, fm.height() + 2);
-        const QRectF badge(x, cy - s / 2, s, s);
-        p->setPen(Qt::NoPen);
-        p->setBrush(c);
-        p->drawRoundedRect(badge, s * 0.25, s * 0.25);
-        QFont bf = font;
-        bf.setBold(true);
-        bf.setPixelSize(qMax(7, int(s * 0.62)));
-        p->setFont(bf);
-        p->setPen(Qt::white);
-        p->drawText(badge, Qt::AlignCenter, QString(h.status));
+        p->setFont(font);
+        drawStatusBadge(p, QRectF(x, cy - s / 2, s, s), h.status);
         x += s + 8;
     }
 
@@ -911,20 +894,8 @@ void DiffView::paintFileHeader(QPainter *p, const QRectF &r, const FileHeader &h
         p->drawText(QRectF(right, r.top(), fm.horizontalAdvance(t) + 1, r.height()), Qt::AlignVCenter, t);
         right -= 10;
     } else if (h.added || h.removed) {
-        const QColor plus = Settings::darkTheme() ? QColor(0x56, 0xd3, 0x64) : QColor(0x1f, 0x88, 0x3d);
-        const QColor minus = Settings::darkTheme() ? QColor(0xff, 0x7b, 0x72) : QColor(0xcf, 0x22, 0x2e);
-        if (!h.submodule) {
-            const int total = h.added + h.removed;
-            const int green = total ? qRound(5.0 * h.added / total) : 0;
-            const double bs = qMax(5.0, fm.height() * 0.5);
-            for (int i = 4; i >= 0; --i) {
-                right -= bs;
-                const QRectF sq(right, cy - bs / 2, bs - 1.5, bs - 1.5);
-                p->fillRect(sq, i < green ? plus : minus);
-                right -= 0.5;
-            }
-            right -= 8;
-        }
+        const QColor plus = addedColor(), minus = removedColor();
+        if (!h.submodule) right = drawChangeBar(p, right, cy, qMax(5.0, fm.height() * 0.5), h.added, h.removed) - 8;
         const QString m = h.submodule ? tr("%1 commits").arg(h.added + h.removed) : QStringLiteral("−%1").arg(h.removed);
         const QString a = QStringLiteral("+%1").arg(h.added);
         if (h.submodule) {
@@ -1266,17 +1237,7 @@ void DiffView::renderFile(const FileDiff &f) {
                        : f.path();
     header.status = f.status;
     header.binary = f.binary;
-    bool hunks = false;
-    for (const QString &line : f.lines) {
-        if (!hunks) {
-            hunks = line.startsWith(QLatin1String("@@"));
-            continue;
-        }
-        if (line.startsWith(QLatin1String("@@"))) continue;
-        const QString marks = line.left(n);
-        if (marks.contains(QLatin1Char('+'))) ++header.added;
-        else if (marks.contains(QLatin1Char('-'))) ++header.removed;
-    }
+    f.countChanges(&header.added, &header.removed);
     m_fileStarts.insert(int(m_meta.size()), header);
     DiffLineInfo fileMeta;
     fileMeta.path = f.path();

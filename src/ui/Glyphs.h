@@ -31,6 +31,16 @@ enum class Glyph {
 // Draws `g` into `r` (a square works best) in `color`.
 void drawGlyph(QPainter *p, Glyph g, const QRectF &r, const QColor &color);
 
+// A file's change status (A, M, D, R, C, T) as a coloured rounded square with the letter.
+QColor statusColor(QChar status);
+void drawStatusBadge(QPainter *p, const QRectF &r, QChar status);
+// Colours of added / removed line counts.
+QColor addedColor();
+QColor removedColor();
+// Five small squares, green and red in the proportion of added to removed lines, ending at
+// `right` and centred on `cy`; returns the left edge.
+double drawChangeBar(QPainter *p, double right, double cy, double size, int added, int removed);
+
 // An icon painting `g` at any size. With an invalid `color` it uses the application palette's
 // text colour (button text for active, a dimmed variant for disabled icons) at paint time.
 QIcon glyphIcon(Glyph g, const QColor &color = QColor());

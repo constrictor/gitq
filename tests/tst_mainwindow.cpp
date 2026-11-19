@@ -170,9 +170,23 @@ private slots:
         child<Choice>(&w, "wordDiff")->setCurrentIndex(0);
         QTRY_VERIFY(diffText(&w).contains(QStringLiteral("+int x = 3;")));
 
-        child<QRadioButton>(&w, "treeMode")->setChecked(true);
+        // Patch mode: line counts per file; grouped by folder, a row for each folder.
         auto *files = child<QListView>(&w, "fileList");
-        QTRY_COMPARE(files->model()->rowCount(), 2);   // README, src/main.c at that commit
+        QTRY_COMPARE(files->model()->rowCount(), 2);   // Comments, src/main.c
+        QCOMPARE(files->model()->index(1, 0).data(FileListModel::AddedRole).toInt(), 1);
+        QCOMPARE(files->model()->index(1, 0).data(FileListModel::RemovedRole).toInt(), 1);
+        child<QToolButton>(&w, "groupFiles")->click();
+        QCOMPARE(files->model()->rowCount(), 3);
+        QVERIFY(files->model()->index(1, 0).data(FileListModel::IsFolderRole).toBool());
+        QCOMPARE(files->model()->index(1, 0).data(FileListModel::NameRole).toString(), QStringLiteral("src/"));
+        QCOMPARE(files->model()->index(2, 0).data(FileListModel::NameRole).toString(), QStringLiteral("main.c"));
+        shot(&w, QStringLiteral("12-grouped-files"));
+        child<QToolButton>(&w, "groupFiles")->click();
+        QCOMPARE(files->model()->rowCount(), 2);
+
+        child<QToolButton>(&w, "treeMode")->setChecked(true);
+        QTRY_COMPARE(files->model()->index(0, 0).data(FileListModel::PathRole).toString(), QStringLiteral("README"));
+        QCOMPARE(files->model()->rowCount(), 2);   // README, src/main.c at that commit
         QModelIndex idx = files->model()->index(1, 0);
         QCOMPARE(idx.data(FileListModel::PathRole).toString(), QStringLiteral("src/main.c"));
         emit files->clicked(idx);
@@ -243,7 +257,7 @@ private slots:
         QTRY_COMPARE(t->findChild<QLineEdit *>("shaEdit")->text(), s2);
         // Tree mode lists the submodule's files.
         w.setCurrentTab(0);
-        for (QRadioButton *b : w.findChildren<QRadioButton *>("treeMode"))
+        for (QToolButton *b : w.findChildren<QToolButton *>("treeMode"))
             if (b->isVisible()) b->setChecked(true);
         QTRY_COMPARE(fileRows(), (QStringList{".gitmodules", "lib/sub/x.c", "main.c"}));
         emit files->clicked(files->model()->index(1, 0));

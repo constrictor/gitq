@@ -86,7 +86,9 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
   context, ignore space change,
   line / markup words / color words, diff search (finds as you type; arrows or Ctrl-R / Ctrl-S for the
   previous / next match); the ⋯ menu wraps long lines and chooses how submodule changes are shown.
-- File list: Patch mode (scrolls to the file, tracks the file on screen) and Tree mode (file contents).
+- File list: Patch mode (scrolls to the file, tracks the file on screen) and Tree mode (file contents);
+  each file has a status badge and its added / removed line counts (with a five-block bar when the
+  pane is wide enough); the folder button groups the files under a row per folder.
 - Submodules: a commit that moves a submodule lists the submodule's commits in between
   (⋯ ▸ Submodule changes: *Commits in between*, the default); *[show files]* adds its file changes to the diff and file list
   as ordinary files under the submodule's path, *Full diff* does that for every submodule, *Summary*

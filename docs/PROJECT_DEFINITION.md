@@ -92,8 +92,8 @@ gitq fills the gap with a fast, focused history browser that:
 
 ### 6.4 File list
 
-- Patch mode: lists files changed by the commit and keeps the selection in sync with the diff
-  position.
+- Patch mode: lists files changed by the commit with their status and line counts, and keeps the
+  selection in sync with the diff position. Files can be grouped by folder.
 - Tree mode: browse the commit's tree and view file contents.
 
 ### 6.5 Search and views

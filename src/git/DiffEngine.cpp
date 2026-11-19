@@ -11,6 +11,24 @@
 
 namespace gitq {
 
+void FileDiff::countChanges(int *added, int *removed) const {
+    const int n = qMax(1, numParents);
+    int a = 0, r = 0;
+    bool hunks = false;
+    for (const QString &line : lines) {
+        if (line.startsWith(QLatin1String("@@"))) {
+            hunks = true;
+            continue;
+        }
+        if (!hunks || line.startsWith(QLatin1Char('\\'))) continue;
+        const QString marks = line.left(n);
+        if (marks.contains(QLatin1Char('+'))) ++a;
+        else if (marks.contains(QLatin1Char('-'))) ++r;
+    }
+    *added = a;
+    *removed = r;
+}
+
 namespace {
 
 // Holds a git_strarray built from a QStringList.

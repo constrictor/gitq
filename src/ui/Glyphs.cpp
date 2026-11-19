@@ -124,6 +124,48 @@ void drawGlyph(QPainter *p, Glyph g, const QRectF &box, const QColor &color) {
     p->restore();
 }
 
+QColor statusColor(QChar status) {
+    switch (status.unicode()) {
+    case 'A': return QColor(0x2e, 0x9d, 0x4f);
+    case 'D': return QColor(0xd9, 0x3f, 0x3f);
+    case 'R': return QColor(0x8e, 0x5c, 0xd9);
+    case 'C': return QColor(0x13, 0x9c, 0x9c);
+    case 'T': return QColor(0x80, 0x80, 0x80);
+    default: return QColor(0xd0, 0x8a, 0x2e);
+    }
+}
+
+void drawStatusBadge(QPainter *p, const QRectF &r, QChar status) {
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing, true);
+    p->setPen(Qt::NoPen);
+    p->setBrush(statusColor(status));
+    p->drawRoundedRect(r, r.height() * 0.25, r.height() * 0.25);
+    QFont f = p->font();
+    f.setBold(true);
+    f.setPixelSize(qMax(7, int(r.height() * 0.62)));
+    p->setFont(f);
+    p->setPen(Qt::white);
+    p->drawText(r, Qt::AlignCenter, QString(status));
+    p->restore();
+}
+
+QColor addedColor() { return Settings::darkTheme() ? QColor(0x56, 0xd3, 0x64) : QColor(0x1f, 0x88, 0x3d); }
+QColor removedColor() { return Settings::darkTheme() ? QColor(0xff, 0x7b, 0x72) : QColor(0xcf, 0x22, 0x2e); }
+
+double drawChangeBar(QPainter *p, double right, double cy, double size, int added, int removed) {
+    const int total = added + removed;
+    const int green = total ? qRound(5.0 * added / total) : 0;
+    const QColor none = Settings::mix(Settings::instance().bgColor, Settings::instance().fgColor, 0.2);
+    for (int i = 4; i >= 0; --i) {
+        right -= size;
+        p->fillRect(QRectF(right, cy - size / 2, size - 1.5, size - 1.5),
+                    total == 0 ? none : i < green ? addedColor() : removedColor());
+        right -= 0.5;
+    }
+    return right;
+}
+
 namespace {
 
 class GlyphEngine : public QIconEngine {
