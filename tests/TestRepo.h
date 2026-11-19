@@ -60,6 +60,17 @@ public:
 
     QString rev(const QString &spec) { return git({"rev-parse", spec}).trimmed(); }
 
+    // Adds the repository at `url` as a submodule at `path` (staged, not committed).
+    void addSubmodule(const QString &url, const QString &path) {
+        git({"-c", "protocol.file.allow=always", "submodule", "add", "-q", url, path});
+    }
+
+    // Checks out `commit` (fetched from its origin first) in the submodule at `path` (not staged).
+    void moveSubmodule(const QString &path, const QString &commit) {
+        git({"-C", path, "fetch", "-q", "origin"});
+        git({"-C", path, "checkout", "-q", commit});
+    }
+
     Repository open() const { return Repository::open(m_dir.path()); }
 
     int m_tick = 0;

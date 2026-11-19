@@ -39,6 +39,8 @@ public:
 
     void setMode(Mode m) { m_mode = m; }
     void setWordMode(WordMode m) { m_wordMode = m; }
+    // Whether submodule entries offer to show / hide their files (DiffOptions::SubmoduleLog).
+    void setSubmoduleToggles(bool on) { m_submoduleToggles = on; }
 
     void scrollToFile(const QString &path);
     void scrollToTop();
@@ -57,6 +59,10 @@ public:
 
 signals:
     void commitLinkActivated(const gitq::Oid &id);
+    // Show / hide the file changes of the submodule at `path`.
+    void submoduleToggled(const QString &path);
+    // Open the submodule at `path` in a tab, at `commit` (null: the commit it was changed to).
+    void submoduleOpenRequested(const QString &path, const gitq::Oid &commit);
     void fileAtTopChanged(const QString &path);
     void diffContextMenu(const gitq::DiffLineInfo &info, const QPoint &globalPos);
 
@@ -82,12 +88,15 @@ private:
     void flushBody();
     void appendLink(QTextCursor &cur, const QString &label, const Oid &id);
     void renderFile(const FileDiff &f);
+    void renderSubmodule(const SubmoduleChange &s);
+    void appendLinkTo(QTextCursor &cur, const QString &label, const QString &href);
     void renderWordRun(const QStringList &dels, const QStringList &adds, const QString &path, int &oldNo, int &newNo);
     void updateExtraSelections();
     void onScroll();
 
     Mode m_mode = ShowDiff;
     WordMode m_wordMode = LineDiff;
+    bool m_submoduleToggles = false;
     QList<DiffLineInfo> m_meta;             // per block
     QList<quint8> m_style;                  // per block
     QHash<int, QList<WordRange>> m_wordRanges;

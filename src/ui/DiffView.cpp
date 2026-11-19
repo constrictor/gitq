@@ -9,6 +9,7 @@
 #include <QSyntaxHighlighter>
 #include <QTextBlock>
 #include <QTextDocument>
+#include <QUrl>
 
 namespace gitq {
 
@@ -112,11 +113,15 @@ void DiffView::appendLine(const QString &text, const QTextCharFormat &fmt, const
 }
 
 void DiffView::appendLink(QTextCursor &cur, const QString &label, const Oid &id) {
+    appendLinkTo(cur, label, QStringLiteral("commit:") + id.hex());
+}
+
+void DiffView::appendLinkTo(QTextCursor &cur, const QString &label, const QString &href) {
     QTextCharFormat f;
     f.setForeground(Settings::instance().linkColor);
     f.setFontUnderline(true);
     f.setAnchor(true);
-    f.setAnchorHref(QStringLiteral("commit:") + id.hex());
+    f.setAnchorHref(href);
     cur.insertText(label, f);
 }
 
@@ -217,7 +222,12 @@ void DiffView::showNearby(const NearbyRefs &n, int maxRefs) {
 void DiffView::appendDiff(const DiffResult &diff) {
     const int keep = verticalScrollBar()->value();
     if (!diff.error.isEmpty()) addBodyLine(diff.error, ErrorStyle, {});
-    for (const FileDiff &f : diff.files) renderFile(f);
+    for (const FileDiff &f : diff.files) {
+        if (f.submodule >= 0 && f.submodule < diff.submodules.size() && diff.submodules[f.submodule].detailed)
+            renderSubmodule(diff.submodules[f.submodule]);
+        else
+            renderFile(f);
+    }
     flushBody();
     verticalScrollBar()->setValue(keep);
     updateExtraSelections();
@@ -310,6 +320,68 @@ void DiffView::renderFile(const FileDiff &f) {
         addBodyLine(text, isDel ? OldStyle : isAdd ? NewStyle : PlainStyle, meta);
     }
     flushRun();
+}
+
+// A submodule entry: what it moved from and to, the commits in between (as links that open the
+// submodule in a tab) and links to show its files and to open it.
+void DiffView::renderSubmodule(const SubmoduleChange &s) {
+    m_fileStarts.insert(int(m_meta.size()), s.path);
+    DiffLineInfo meta;
+    meta.path = s.path;
+    addBodyLine(QStringLiteral("---------- %1 (submodule) ----------").arg(s.path), FileSepStyle, meta);
+    flushBody();
+
+    const QTextCharFormat plain = plainFormat();
+    const QString path = QString::fromLatin1(QUrl::toPercentEncoding(s.path));
+    const bool available = !s.repoPath.isEmpty();
+    auto commitLink = [&](QTextCursor &cur, const Oid &id) {
+        if (available) appendLinkTo(cur, id.shortHex(), QStringLiteral("subcommit:%1:%2").arg(id.hex(), path));
+        else cur.insertText(id.shortHex(), plain);
+    };
+    auto line = [&] {
+        appendLine(QString(), plain, meta);
+        QTextCursor cur(document());
+        cur.movePosition(QTextCursor::End);
+        return cur;
+    };
+
+    QTextCursor cur = line();
+    cur.insertText(tr("Submodule %1 ").arg(s.path), plain);
+    if (s.oldId.isNull() && !s.newId.isNull()) {
+        cur.insertText(tr("added at "), plain);
+        commitLink(cur, s.newId);
+    } else if (s.newId.isNull() && !s.oldId.isNull()) {
+        cur.insertText(tr("removed (was at "), plain);
+        commitLink(cur, s.oldId);
+        cur.insertText(QStringLiteral(")"), plain);
+    } else {
+        commitLink(cur, s.oldId);
+        cur.insertText(s.removed.isEmpty() ? QStringLiteral("..") : QStringLiteral("..."), plain);
+        commitLink(cur, s.newId);
+        if (s.newIsWorkdir) cur.insertText(tr(" + work tree"), plain);
+        if (!s.removed.isEmpty()) cur.insertText(tr(" (rewind)"), plain);
+    }
+    if (m_submoduleToggles && s.expandable) {
+        cur.insertText(QStringLiteral("   "), plain);
+        appendLinkTo(cur, s.expanded ? tr("[hide files]") : tr("[show files]"), QStringLiteral("subtoggle:") + path);
+    }
+    if (available) {
+        cur.insertText(QStringLiteral("   "), plain);
+        appendLinkTo(cur, tr("[open in tab]"), QStringLiteral("subcommit::") + path);
+    }
+
+    auto commits = [&](const QList<CommitLink> &list, int more, const QString &mark) {
+        for (const CommitLink &c : list) {
+            QTextCursor l = line();
+            l.insertText(QStringLiteral("  %1 ").arg(mark), plain);
+            commitLink(l, c.first);
+            l.insertText(QLatin1Char(' ') + c.second, plain);
+        }
+        if (more > 0) line().insertText(tr("  %1 ... and %n more", nullptr, more).arg(mark), plain);
+    };
+    commits(s.added, s.moreAdded, QStringLiteral(">"));
+    commits(s.removed, s.moreRemoved, QStringLiteral("<"));
+    for (const QString &note : s.notes) line().insertText(QStringLiteral("  (%1)").arg(note), plain);
 }
 
 void DiffView::renderWordRun(const QStringList &dels, const QStringList &adds, const QString &path, int &oldNo,
@@ -523,7 +595,16 @@ void DiffView::mouseReleaseEvent(QMouseEvent *e) {
     QPlainTextEdit::mouseReleaseEvent(e);
     if (e->button() != Qt::LeftButton || textCursor().hasSelection()) return;
     QString href = anchorAt(e->pos());
-    if (href.startsWith(QLatin1String("commit:"))) emit commitLinkActivated(Oid::fromHex(href.mid(7)));
+    if (href.startsWith(QLatin1String("commit:"))) {
+        emit commitLinkActivated(Oid::fromHex(href.mid(7)));
+    } else if (href.startsWith(QLatin1String("subtoggle:"))) {
+        emit submoduleToggled(QUrl::fromPercentEncoding(href.mid(10).toLatin1()));
+    } else if (href.startsWith(QLatin1String("subcommit:"))) {
+        const QString rest = href.mid(10);
+        const int colon = int(rest.indexOf(QLatin1Char(':')));
+        emit submoduleOpenRequested(QUrl::fromPercentEncoding(rest.mid(colon + 1).toLatin1()),
+                                    colon > 0 ? Oid::fromHex(rest.left(colon)) : Oid());
+    }
 }
 
 void DiffView::contextMenuEvent(QContextMenuEvent *e) {

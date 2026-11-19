@@ -119,6 +119,7 @@ void Settings::load() {
     diffContext = q.value(QStringLiteral("diffContext"), diffContext).toInt();
     ignoreSpace = q.value(QStringLiteral("ignoreSpace"), ignoreSpace).toBool();
     wordDiff = q.value(QStringLiteral("wordDiff"), wordDiff).toInt();
+    submoduleDiff = q.value(QStringLiteral("submoduleDiff"), submoduleDiff).toInt();
     dateFormat = q.value(QStringLiteral("dateFormat"), dateFormat).toString();
     extDiffTool = q.value(QStringLiteral("extDiffTool"), extDiffTool).toString();
     maxRefs = q.value(QStringLiteral("maxRefs"), maxRefs).toInt();
@@ -180,6 +181,7 @@ void Settings::save() const {
     q.setValue(QStringLiteral("diffContext"), diffContext);
     q.setValue(QStringLiteral("ignoreSpace"), ignoreSpace);
     q.setValue(QStringLiteral("wordDiff"), wordDiff);
+    q.setValue(QStringLiteral("submoduleDiff"), submoduleDiff);
     q.setValue(QStringLiteral("dateFormat"), dateFormat);
     q.setValue(QStringLiteral("extDiffTool"), extDiffTool);
     q.setValue(QStringLiteral("maxRefs"), maxRefs);

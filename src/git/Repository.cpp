@@ -1,6 +1,8 @@
 #include "git/Repository.h"
 
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 
 namespace gitq {
 
@@ -35,10 +37,52 @@ Repository Repository::open(const QString &path) {
     check(git_repository_discover(&root.buf, p.constData(), 0, nullptr), QStringLiteral("not a git repository"));
     git_repository *r = nullptr;
     check(git_repository_open(&r, root.buf.ptr), QStringLiteral("cannot open repository"));
+    return wrap(r);
+}
+
+Repository Repository::wrap(git_repository *r) {
     Repository repo;
     repo.m_repo.reset(r);
     repo.m_path = QString::fromUtf8(git_repository_path(r));
     return repo;
+}
+
+Repository Repository::openSubmodule(const QString &path) const {
+    const QByteArray p = path.toUtf8();
+    QString name = path;
+    git_submodule *sm = nullptr;
+    if (git_submodule_lookup(&sm, m_repo.get(), p.constData()) == 0) {
+        name = QString::fromUtf8(git_submodule_name(sm));
+        git_repository *r = nullptr;
+        const int rc = git_submodule_open(&r, sm);
+        git_submodule_free(sm);
+        if (rc == 0) return wrap(r);
+    }
+    git_error_clear();
+    // Not checked out (or no longer in .gitmodules): its repository may still be in .git/modules.
+    const QString dir = QDir(m_path).filePath(QStringLiteral("modules/") + name);
+    if (!QFileInfo::exists(QDir(dir).filePath(QStringLiteral("HEAD")))) return {};
+    git_repository *r = nullptr;
+    if (git_repository_open_ext(&r, QFile::encodeName(dir).constData(), GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr) < 0) {
+        git_error_clear();
+        return {};
+    }
+    return wrap(r);
+}
+
+unsigned Repository::submoduleStatus(const QString &path) const {
+    git_submodule *sm = nullptr;
+    if (git_submodule_lookup(&sm, m_repo.get(), path.toUtf8().constData()) < 0) {
+        git_error_clear();
+        return 0;
+    }
+    unsigned st = 0;
+    if (git_submodule_status(&st, m_repo.get(), git_submodule_name(sm), GIT_SUBMODULE_IGNORE_UNSPECIFIED) < 0) {
+        git_error_clear();
+        st = 0;
+    }
+    git_submodule_free(sm);
+    return st;
 }
 
 QString Repository::workdir() const {
@@ -174,7 +218,9 @@ void Repository::localChanges(bool *indexChanged, bool *workdirChanged) const {
     if (isBare()) return;
     git_status_options opts = GIT_STATUS_OPTIONS_INIT;
     opts.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
-    opts.flags = GIT_STATUS_OPT_EXCLUDE_SUBMODULES;   // untracked files are not "changes" for gitk
+    // Untracked files are not "changes" for gitk. Submodules count when they point at another
+    // commit or have modified content (as in `git status`; their `ignore` setting applies).
+    opts.flags = 0;
     git_status_list *list = nullptr;
     if (git_status_list_new(&list, m_repo.get(), &opts) < 0) {
         git_error_clear();

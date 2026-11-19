@@ -234,6 +234,12 @@ void RepoTab::buildUi() {
     m_wordDiff->setObjectName(QStringLiteral("wordDiff"));
     m_wordDiff->addItems({tr("Line diff"), tr("Markup words"), tr("Color words")});
     m_wordDiff->setCurrentIndex(Settings::instance().wordDiff);
+    m_submoduleMode = new QComboBox;
+    m_submoduleMode->setObjectName(QStringLiteral("submoduleMode"));
+    m_submoduleMode->addItems({tr("Summary"), tr("Commits"), tr("Full diff")});
+    m_submoduleMode->setToolTip(tr("Submodule changes: the commits recorded, the commits in between (click "
+                                   "\"show files\" for their changes), or every file change inside"));
+    m_submoduleMode->setCurrentIndex(qBound(0, Settings::instance().submoduleDiff, 2));
     for (QWidget *w : {static_cast<QWidget *>(m_modeDiff), static_cast<QWidget *>(m_modeOld),
                        static_cast<QWidget *>(m_modeNew)})
         mbar->addWidget(w);
@@ -242,6 +248,9 @@ void RepoTab::buildUi() {
     mbar->addWidget(m_contextSpin);
     mbar->addWidget(m_ignoreSpace);
     mbar->addWidget(m_wordDiff);
+    mbar->addSpacing(10);
+    mbar->addWidget(new QLabel(tr("Submodules:")));
+    mbar->addWidget(m_submoduleMode);
     mbar->addStretch(1);
     ll->addLayout(mbar);
     m_diff = new DiffView;
@@ -256,6 +265,7 @@ void RepoTab::buildUi() {
     m_patchMode = new QRadioButton(tr("Patch"));
     m_treeMode = new QRadioButton(tr("Tree"));
     m_treeMode->setObjectName(QStringLiteral("treeMode"));
+    m_patchMode->setObjectName(QStringLiteral("patchMode"));
     m_patchMode->setChecked(true);
     rbar->addWidget(m_patchMode);
     rbar->addWidget(m_treeMode);
@@ -302,11 +312,13 @@ void RepoTab::buildUi() {
         st.diffContext = m_contextSpin->value();
         st.ignoreSpace = m_ignoreSpace->isChecked();
         st.wordDiff = m_wordDiff->currentIndex();
+        st.submoduleDiff = m_submoduleMode->currentIndex();
         startDiff();
     };
     connect(m_contextSpin, &QSpinBox::valueChanged, this, redisplay);
     connect(m_ignoreSpace, &QCheckBox::toggled, this, redisplay);
     connect(m_wordDiff, &QComboBox::currentIndexChanged, this, redisplay);
+    connect(m_submoduleMode, &QComboBox::currentIndexChanged, this, redisplay);
     for (QRadioButton *b : {m_modeDiff, m_modeOld, m_modeNew})
         connect(b, &QRadioButton::toggled, this, [this, redisplay](bool on) {
             if (on) redisplay();
@@ -318,6 +330,11 @@ void RepoTab::buildUi() {
     connect(m_diff, &DiffView::commitLinkActivated, this, [this](const Oid &id) {
         if (!selectCommit(id)) emit statusMessage(tr("Commit %1 is not in the current view").arg(id.shortHex(10)), 5000);
     });
+    connect(m_diff, &DiffView::submoduleToggled, this, [this](const QString &path) {
+        if (!m_expandedSubmodules.remove(path)) m_expandedSubmodules.insert(path);
+        startDiff();
+    });
+    connect(m_diff, &DiffView::submoduleOpenRequested, this, &RepoTab::openSubmodule);
     connect(m_diff, &DiffView::fileAtTopChanged, this, [this](const QString &path) {
         if (!m_patchMode->isChecked()) return;
         int r = path.isEmpty() ? 0 : m_fileModel->rowOfPath(path);
@@ -437,6 +454,7 @@ void RepoTab::startLoad(bool keepSelection) {
     m_pendingSelect.reset();
     if (keepSelection && m_hasSelection) m_pendingSelect = m_selected;
     else if (!m_refs.head.isNull()) m_pendingSelect = m_refs.head;
+    if (m_revealId) m_pendingSelect = m_revealId;
     m_selectFirstWhenDone = true;
     m_selected = Oid();
     m_hasSelection = false;
@@ -460,6 +478,7 @@ void RepoTab::onCommitsLoaded(const CommitPtrList &batch) {
         int r = m_model->rowOf(*m_pendingSelect);
         if (r >= 0) {
             m_pendingSelect.reset();
+            m_revealId.reset();
             m_selectFirstWhenDone = false;
             selectRow(r);
             m_list->scrollTo(m_model->index(r, 0), QAbstractItemView::PositionAtCenter);
@@ -481,6 +500,11 @@ void RepoTab::onLoadFinished(const QString &error) {
     if (!error.isEmpty()) {
         if (m_model->rowCount() == 0) QMessageBox::warning(this, tr("Error reading commits"), error);
         else emit statusMessage(error, 10000);
+    }
+    if (m_revealId) {
+        emit statusMessage(tr("Commit %1 is not in the current view").arg(m_revealId->shortHex(10)), 10000);
+        m_revealId.reset();
+        m_pendingLine.reset();
     }
     if (m_selectFirstWhenDone && selectedRow() < 0 && m_model->rowCount() > 0) selectRow(0);
     m_selectFirstWhenDone = false;
@@ -527,6 +551,31 @@ bool RepoTab::selectCommit(const Oid &id, bool addToHistory) {
     selectRow(r);
     m_navigating = prev;
     return true;
+}
+
+void RepoTab::revealCommit(const Oid &id, const QString &file, int line) {
+    m_pendingLine.reset();
+    if (line > 0) m_pendingLine = PendingLine{id, file, line};
+    if (m_activated && m_model->rowOf(id) >= 0) {
+        m_pendingSelect.reset();
+        m_revealId.reset();
+        if (m_hasSelection && m_selected == id && !m_rangeDiff) {
+            // Already shown: scroll now if its diff is complete.
+            if (m_pendingLine && m_diffWatcher.isFinished() && m_diff->scrollToLine(file, line, true))
+                m_pendingLine.reset();
+            return;
+        }
+        selectCommit(id);
+        m_list->scrollTo(m_model->index(m_model->rowOf(id), 0), QAbstractItemView::PositionAtCenter);
+        return;
+    }
+    if (!m_activated || m_loader->isRunning()) {
+        m_revealId = id;
+        if (m_activated) m_pendingSelect = id;
+        return;
+    }
+    m_pendingLine.reset();
+    emit statusMessage(tr("Commit %1 is not in the current view").arg(id.shortHex(10)), 10000);
 }
 
 void RepoTab::moveSelection(int delta) {
@@ -608,7 +657,8 @@ void RepoTab::showRangeDiff(const Oid &from, const Oid &to) {
         return id.isPseudo() ? (id.isWorkdir() ? tr("local changes") : tr("index"))
                              : QStringLiteral("%1 (%2)").arg(id.shortHex(10), headlineOf(id));
     };
-    m_diff->showRangeHeader(tr("Diff from %1\n       to %2").arg(label(from), label(to)));
+    m_rangeHeader = tr("Diff from %1\n       to %2").arg(label(from), label(to));
+    m_diff->showRangeHeader(m_rangeHeader);
     startDiff();
 }
 
@@ -617,6 +667,9 @@ DiffOptions RepoTab::diffOptions() const {
     o.context = m_contextSpin->value();
     o.ignoreSpaceChange = m_ignoreSpace->isChecked();
     if (Settings::instance().limitDiffs) o.paths = m_opts.paths;
+    o.submodules = m_submoduleMode->currentIndex();
+    o.expandSubmodules = QStringList(m_expandedSubmodules.cbegin(), m_expandedSubmodules.cend());
+    o.expandSubmodules.sort();
     return o;
 }
 
@@ -634,7 +687,7 @@ void RepoTab::startDiff() {
         try {
             Repository repo = Repository::open(path);
             job.diff = range ? DiffEngine::diffBetween(repo, from, to, opts) : DiffEngine::diffCommit(repo, to, opts);
-            if (tree) job.tree = DiffEngine::treeFiles(repo, to);
+            if (tree) job.tree = DiffEngine::treeFiles(repo, to, opts.submodules != DiffOptions::SubmoduleSummary);
         } catch (const GitError &e) {
             job.diff.error = e.message();
         }
@@ -660,11 +713,21 @@ void RepoTab::onDiffReady() {
             if (n.id == m_selected) m_diff->showNearby(n, Settings::instance().maxRefs);
         }
         m_diff->verticalScrollBar()->setValue(keep);
+    } else {
+        // Redisplay (options changed): start from the header again.
+        int keep = m_diff->verticalScrollBar()->value();
+        m_diff->showRangeHeader(m_rangeHeader);
+        m_diff->verticalScrollBar()->setValue(keep);
     }
+    m_diff->setSubmoduleToggles(m_submoduleMode->currentIndex() == DiffOptions::SubmoduleLog);
     m_diff->setMode(m_modeOld->isChecked() ? DiffView::ShowOld : m_modeNew->isChecked() ? DiffView::ShowNew : DiffView::ShowDiff);
     m_diff->setWordMode(DiffView::WordMode(m_wordDiff->currentIndex()));
     m_diff->appendDiff(job.diff);
     m_diff->setFindSpec(m_findSpec);
+    if (m_pendingLine && !m_rangeDiff && m_pendingLine->commit == m_selected) {
+        m_diff->scrollToLine(m_pendingLine->path, m_pendingLine->line, true);
+        m_pendingLine.reset();
+    }
     if (m_treeMode->isChecked()) {
         QList<FileListModel::Entry> entries;
         for (const QString &p : job.tree) entries.append({p, QChar()});
@@ -937,12 +1000,12 @@ void RepoTab::fileMenu(const QPoint &pos) {
     menu.addAction(tr("Highlight this too"), this, [highlight] { highlight(false); });
     menu.addAction(tr("Highlight this only"), this, [highlight] { highlight(true); });
     menu.addAction(tr("External diff"), this, [this, path] { externalDiff(path); });
-    const CommitInfo *c = m_model->commitAt(m_model->rowOf(m_selected));
-    QAction *a = menu.addAction(tr("Blame parent commit"), this, [this, path, c] {
-        if (c && !c->parents.isEmpty()) blame(path, c->parents.first(), 0);
-    });
-    a->setEnabled(c && !c->parents.isEmpty() && !m_selected.isPseudo());
-    menu.addAction(tr("Blame this commit"), this, [this, path] { blame(path, m_selected, 0); });
+    std::optional<Oid> parent = sideCommit(true);
+    QAction *a = menu.addAction(tr("Blame parent commit"), this, [this, path] { blame(path, true, 0); });
+    a->setEnabled(parent && !m_selected.isPseudo());
+    menu.addAction(tr("Blame this commit"), this, [this, path] { blame(path, false, 0); });
+    if (canOpenSubmodule(path))
+        menu.addAction(tr("Open submodule in new tab"), this, [this, path] { openSubmodule(path, Oid()); });
     menu.addAction(tr("Copy path"), this, [path] { QApplication::clipboard()->setText(path); });
     menu.exec(m_files->viewport()->mapToGlobal(pos));
 }
@@ -953,12 +1016,12 @@ void RepoTab::diffMenu(const DiffLineInfo &info, const QPoint &pos) {
     QAction *a = menu.addAction(tr("Show origin of this line"), this, [this, info] { showLineOrigin(info); });
     a->setEnabled(line);
     a = menu.addAction(tr("Run blame on this line"), this, [this, info] {
-        const CommitInfo *c = m_model->commitAt(m_model->rowOf(m_selected));
-        if (!c) return;
-        if (info.kind == QLatin1Char('-') && !c->parents.isEmpty()) blame(info.path, c->parents.first(), info.oldLine);
-        else blame(info.path, m_selected, info.newLine);
+        const bool old = info.kind == QLatin1Char('-');
+        blame(info.path, old, old ? info.oldLine : info.newLine);
     });
     a->setEnabled(line);
+    if (!info.path.isEmpty() && canOpenSubmodule(info.path))
+        menu.addAction(tr("Open submodule in new tab"), this, [this, info] { openSubmodule(info.path, Oid()); });
     menu.addSeparator();
     menu.addAction(tr("Copy"), m_diff, &QPlainTextEdit::copy);
     menu.addAction(tr("Select all"), m_diff, &QPlainTextEdit::selectAll);
@@ -1239,34 +1302,92 @@ void RepoTab::externalDiff(const QString &path) {
         QMessageBox::warning(this, tr("External diff"), tr("Could not start %1").arg(prog));
 }
 
-void RepoTab::blame(const QString &path, const Oid &at, int line) {
-    auto *w = new BlameWindow(m_repoPath, path, at, line, this);
-    connect(w, &BlameWindow::commitActivated, this, [this](const Oid &id) {
+std::optional<Oid> RepoTab::sideCommit(bool oldSide) const {
+    if (!oldSide) return m_selected;
+    const CommitInfo *c = m_model->commitAt(m_model->rowOf(m_selected));
+    if (!c || c->parents.isEmpty()) return std::nullopt;
+    return c->parents.first();
+}
+
+void RepoTab::blame(const QString &path, bool oldSide, int line) {
+    std::optional<Oid> at = sideCommit(oldSide);
+    if (!at) return;
+    QString repoPath = m_repoPath, file = path;
+    Oid commit = *at;
+    SubmoduleLocation loc;
+    const bool inSubmodule = DiffEngine::locateInSubmodule(m_repo, commit, path, &loc) && !loc.path.isEmpty();
+    if (inSubmodule) {
+        repoPath = loc.repoPath;
+        file = loc.path;
+        commit = loc.commit;   // work tree: blame its HEAD (null), like the superproject's
+    }
+    auto *w = new BlameWindow(repoPath, file, commit, line, this);
+    connect(w, &BlameWindow::commitActivated, this, [this, inSubmodule, repoPath](const Oid &id) {
+        if (inSubmodule) {
+            emit openRepositoryRequested(repoPath, id, {}, 0);
+            return;
+        }
         if (!selectCommit(id)) emit statusMessage(tr("Commit %1 is not in the current view").arg(id.shortHex(10)), 5000);
         emit raiseRequested();
     });
     w->show();
 }
 
-void RepoTab::showLineOrigin(const DiffLineInfo &info) {
-    const CommitInfo *c = m_model->commitAt(m_model->rowOf(m_selected));
-    if (!c) return;
-    Oid at = m_selected;
-    int line = info.newLine;
-    if (info.kind == QLatin1Char('-')) {
-        if (c->parents.isEmpty()) return;
-        at = c->parents.first();
-        line = info.oldLine;
+bool RepoTab::canOpenSubmodule(const QString &path) const {
+    if (const SubmoduleChange *s = m_lastDiff.submoduleFor(path); s && !s->repoPath.isEmpty()) return true;
+    SubmoduleLocation loc;
+    return m_hasSelection && DiffEngine::locateInSubmodule(m_repo, m_selected, path, &loc);
+}
+
+void RepoTab::openSubmodule(const QString &path, const Oid &commit) {
+    QString repoPath;
+    Oid at = commit;
+    if (const SubmoduleChange *s = m_lastDiff.submoduleFor(path); s && !s->repoPath.isEmpty()) {
+        repoPath = s->repoPath;
+        if (at.isNull()) at = s->newId.isNull() ? s->oldId : s->newId;
+        if (s->newIsWorkdir && commit.isNull()) at = Oid();   // the submodule's own local changes
+    } else if (SubmoduleLocation loc; m_hasSelection && DiffEngine::locateInSubmodule(m_repo, m_selected, path, &loc)) {
+        repoPath = loc.repoPath;
+        if (at.isNull()) at = loc.commit;
     }
+    if (repoPath.isEmpty()) {
+        emit statusMessage(tr("The submodule's repository is not available (not checked out)"), 5000);
+        return;
+    }
+    emit openRepositoryRequested(repoPath, at, {}, 0);
+}
+
+void RepoTab::showLineOrigin(const DiffLineInfo &info) {
+    const bool old = info.kind == QLatin1Char('-');
+    std::optional<Oid> side = sideCommit(old);
+    if (!side) return;
+    Oid at = *side;
+    QString path = info.path;
+    const int line = old ? info.oldLine : info.newLine;
     if (line <= 0) return;
-    BlameResult b = Blame::blameFile(m_repo, info.path, at);
+    SubmoduleLocation loc;
+    const bool inSubmodule = DiffEngine::locateInSubmodule(m_repo, at, path, &loc) && !loc.path.isEmpty();
+    BlameResult b;
+    if (inSubmodule) {
+        try {
+            b = Blame::blameFile(Repository::open(loc.repoPath), loc.path, loc.commit);
+        } catch (const GitError &e) {
+            b.error = e.message();
+        }
+    } else {
+        b = Blame::blameFile(m_repo, path, at);
+    }
     if (line > b.lines.size()) {
         QMessageBox::warning(this, tr("Error"), b.error.isEmpty() ? tr("Couldn't find the origin of this line") : b.error);
         return;
     }
     const BlameLine &bl = b.lines[line - 1];
-    if (selectCommit(bl.commit)) {
-        QTimer::singleShot(300, this, [this, bl] { m_diff->scrollToLine(bl.origPath, bl.origLine, true); });
+    if (inSubmodule) {
+        emit openRepositoryRequested(loc.repoPath, bl.commit, bl.origPath, bl.origLine);
+        return;
+    }
+    if (m_model->rowOf(bl.commit) >= 0) {
+        revealCommit(bl.commit, bl.origPath, bl.origLine);
     } else {
         QMessageBox::information(this, tr("Line origin"),
                                  tr("Line originates in commit %1 (%2), which is not in the current view.")

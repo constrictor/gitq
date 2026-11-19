@@ -11,6 +11,7 @@
 
 #include <QApplication>
 #include <QComboBox>
+#include <QFileInfo>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
@@ -152,6 +153,78 @@ private slots:
         emit files->clicked(idx);
         QTRY_VERIFY(diffText(&w).contains(QStringLiteral("int x = 3;")));
         shot(&w, QStringLiteral("04-tree"));
+    }
+
+    void submodules() {
+        test::TestRepo sub, r;
+        const QString s1 = sub.commit("s1", {{"x.c", "1\n2\n3\n"}});
+        r.commit("init", {{"main.c", "m\n"}});
+        r.addSubmodule(sub.path(), "lib/sub");
+        r.commit("Add sub");
+        const QString s2 = sub.commit("Change x in sub", {{"x.c", "1\ntwo\n3\n"}});
+        r.moveSubmodule("lib/sub", s2);
+        r.commit("Bump sub");
+
+        MainWindow w(r.path(), {});
+        w.resize(1200, 900);
+        w.show();
+        waitLoaded(&w);
+        auto *diff = child<DiffView>(&w, "diffView");
+        auto *files = child<QListView>(&w, "fileList");
+        auto fileRows = [files] {
+            QStringList out;
+            for (int i = 0; i < files->model()->rowCount(); ++i)
+                out << files->model()->index(i, 0).data(FileListModel::PathRole).toString();
+            return out;
+        };
+
+        // Commits: the submodule's commits in between; its files on request.
+        auto *mode = child<QComboBox>(&w, "submoduleMode");
+        mode->setCurrentIndex(DiffOptions::SubmoduleLog);
+        QTRY_VERIFY(diffText(&w).contains("Submodule lib/sub " + s1.left(7) + ".." + s2.left(7)));
+        QVERIFY(diffText(&w).contains("  > " + s2.left(7) + " Change x in sub"));
+        QVERIFY(diffText(&w).contains("[show files]"));
+        QCOMPARE(fileRows(), (QStringList{QString(), "lib/sub"}));
+        emit diff->submoduleToggled("lib/sub");
+        QTRY_VERIFY(diffText(&w).contains("+two"));
+        QVERIFY(diffText(&w).contains("---------- lib/sub/x.c ----------"));
+        QVERIFY(diffText(&w).contains("[hide files]"));
+        QCOMPARE(fileRows(), (QStringList{QString(), "lib/sub", "lib/sub/x.c"}));
+        shot(&w, QStringLiteral("09-submodule"));
+        emit diff->submoduleToggled("lib/sub");
+        QTRY_VERIFY(!diffText(&w).contains("+two"));
+
+        // Full diff: every submodule's files; Summary: git's lines.
+        mode->setCurrentIndex(DiffOptions::SubmoduleDiff);
+        QTRY_VERIFY(diffText(&w).contains("+two"));
+        QVERIFY(!diffText(&w).contains("[hide files]"));
+        mode->setCurrentIndex(DiffOptions::SubmoduleSummary);
+        QTRY_VERIFY(diffText(&w).contains("+Subproject commit " + s2));
+        QCOMPARE(fileRows(), (QStringList{QString(), "lib/sub"}));
+        mode->setCurrentIndex(DiffOptions::SubmoduleLog);
+
+        // The submodule opens in a tab of its own, at the commit asked for.
+        QTRY_VERIFY(diffText(&w).contains("[open in tab]"));
+        emit diff->submoduleOpenRequested("lib/sub", Oid::fromHex(s1));
+        QTRY_COMPARE(w.tabCount(), 2);
+        RepoTab *t = w.currentTab();
+        QCOMPARE(QFileInfo(t->displayPath()).canonicalFilePath(), QFileInfo(r.path() + "/lib/sub").canonicalFilePath());
+        QTRY_COMPARE(t->findChild<QLineEdit *>("shaEdit")->text(), s1);
+        // Asking again switches to that tab.
+        w.setCurrentTab(0);
+        emit diff->submoduleOpenRequested("lib/sub", Oid());
+        QCOMPARE(w.tabCount(), 2);
+        QCOMPARE(w.currentTab(), t);
+        QTRY_COMPARE(t->findChild<QLineEdit *>("shaEdit")->text(), s2);
+        // Tree mode lists the submodule's files.
+        w.setCurrentTab(0);
+        for (QRadioButton *b : w.findChildren<QRadioButton *>("treeMode"))
+            if (b->isVisible()) b->setChecked(true);
+        QTRY_COMPARE(fileRows(), (QStringList{".gitmodules", "lib/sub/x.c", "main.c"}));
+        emit files->clicked(files->model()->index(1, 0));
+        QTRY_VERIFY(diffText(&w).contains("two"));
+
+        Settings::instance().submoduleDiff = DiffOptions::SubmoduleLog;
     }
 
     void keyBindings() {

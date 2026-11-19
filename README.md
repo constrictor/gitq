@@ -61,6 +61,13 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
 - Diff options: lines of context, ignore space change, line / markup words / color words,
   Diff / Old version / New version, diff search (Search field, Ctrl-S / Ctrl-R).
 - File list: Patch mode (scrolls to the file, tracks the file on screen) and Tree mode (file contents).
+- Submodules: a commit that moves a submodule lists the submodule's commits in between
+  (Submodules: *Commits*, the default); *[show files]* adds its file changes to the diff and file list
+  as ordinary files under the submodule's path, *Full diff* does that for every submodule, *Summary*
+  shows git's `Subproject commit` lines. Works for nested submodules and local changes inside them.
+  Commit ids in the list and *[open in tab]* open the submodule in a tab of its own; blame, line
+  origin, external diff and Tree mode reach into submodules; a path inside a submodule matches the
+  commits that move it.
 - Views: new / edit / delete, remembered views, gitk's view dialog fields.
 - Context menus: diff this ↔ selected / marked, make patch, create tag, copy commit reference,
   write commit to file, create branch, cherry-pick, revert, reset (soft/mixed/hard), mark / return to

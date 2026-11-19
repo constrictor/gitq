@@ -333,6 +333,25 @@ RepoTab *MainWindow::openRepository(const QString &path, const QStringList &args
     return t;
 }
 
+RepoTab *MainWindow::openRepositoryAt(const QString &path, const Oid &commit, const QString &file, int line) {
+    RepoTab *t = nullptr;
+    try {
+        const QString gitDir = Repository::open(path).path();
+        for (int i = 0; i < m_tabs.size() && !t; ++i) {
+            if (m_tabs[i]->repoPath() != gitDir) continue;
+            t = m_tabs[i];
+            setCurrentTab(i);
+        }
+        // A submodule's commits are often on no branch it has checked out: show them all.
+        if (!t) t = openRepository(path, {QStringLiteral("--all")});
+    } catch (const GitError &e) {
+        statusBar()->showMessage(tr("Cannot open %1: %2").arg(path, e.message()), 10000);
+        return nullptr;
+    }
+    if (!commit.isNull()) t->revealCommit(commit, file, line);
+    return t;
+}
+
 void MainWindow::addTab(RepoTab *t, int index) {
     m_tabs.insert(index, t);
     m_commitsStack->addWidget(t);
@@ -345,6 +364,12 @@ void MainWindow::addTab(RepoTab *t, int index) {
     connect(t, &RepoTab::viewsChanged, this, [this, t] {
         if (t == currentTab()) rebuildViewMenu();
     }, Qt::QueuedConnection);
+    connect(t, &RepoTab::openRepositoryRequested, this,
+            [this](const QString &path, const Oid &commit, const QString &file, int line) {
+                openRepositoryAt(path, commit, file, line);
+                raise();
+                activateWindow();
+            });
     connect(t, &RepoTab::raiseRequested, this, [this, t] {
         setCurrentTab(int(m_tabs.indexOf(t)));
         raise();

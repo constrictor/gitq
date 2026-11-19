@@ -15,6 +15,7 @@
 #include <QElapsedTimer>
 #include <QFutureWatcher>
 #include <QPointer>
+#include <QSet>
 #include <QTemporaryDir>
 #include <QWidget>
 #include <memory>
@@ -60,6 +61,9 @@ public:
 
     // Select a commit if it is in the view; returns false otherwise.
     bool selectCommit(const Oid &id, bool addToHistory = true);
+    // Select a commit once it is loaded (now, if it is), and scroll its diff to `line` of `file`
+    // (new side) if given; reports in the status bar if the view doesn't contain it.
+    void revealCommit(const Oid &id, const QString &file = {}, int line = 0);
 
     // Commands of the window's menus.
     void startLoad(bool keepSelection);
@@ -82,6 +86,8 @@ signals:
     void statusMessage(const QString &text, int timeout);
     void viewsChanged();
     void raiseRequested();   // a blame window navigated to a commit of this tab
+    // Open the repository at `path` (a submodule's) in a tab and reveal `commit` there (if not null).
+    void openRepositoryRequested(const QString &path, const gitq::Oid &commit, const QString &file, int line);
 
 private:
     struct DiffJob {
@@ -142,7 +148,13 @@ private:
     void renameBranch(const RefInfo &ref);
     void removeBranch(const RefInfo &ref);
     void externalDiff(const QString &path);
-    void blame(const QString &path, const Oid &at, int line);
+    // Commit of the diff's old side (first parent) or new side, or null if there is none.
+    std::optional<Oid> sideCommit(bool oldSide) const;
+    // Blame `path` on the old or new side of the diff; inside a submodule, in the submodule.
+    void blame(const QString &path, bool oldSide, int line);
+    // Open the submodule at or containing `path` in a tab, at `commit` (null: the one shown).
+    void openSubmodule(const QString &path, const Oid &commit);
+    bool canOpenSubmodule(const QString &path) const;
     void showLineOrigin(const DiffLineInfo &info);
     void reportOp(const OpResult &r, const QString &what);
 
@@ -179,6 +191,7 @@ private:
     QSpinBox *m_contextSpin;
     QCheckBox *m_ignoreSpace;
     QComboBox *m_wordDiff;
+    QComboBox *m_submoduleMode;
     DiffView *m_diff;
     QRadioButton *m_patchMode, *m_treeMode;
     QListView *m_files;
@@ -188,6 +201,14 @@ private:
     Oid m_selected;
     bool m_hasSelection = false;
     std::optional<Oid> m_pendingSelect;
+    std::optional<Oid> m_revealId;   // revealCommit() before / while loading
+    struct PendingLine {
+        Oid commit;
+        QString path;
+        int line = 0;
+    };
+    std::optional<PendingLine> m_pendingLine;   // scroll there once that commit's diff is shown
+    QSet<QString> m_expandedSubmodules;         // submodules whose files are shown (SubmoduleLog)
     bool m_selectFirstWhenDone = false;
     QList<Oid> m_history;
     int m_historyIndex = -1;
@@ -195,6 +216,7 @@ private:
 
     bool m_rangeDiff = false;
     bool m_rangeValid = false;
+    QString m_rangeHeader;
     Oid m_diffFrom, m_diffTo;
     DiffResult m_lastDiff;
     quint64 m_diffSeq = 0;

@@ -35,6 +35,13 @@ public:
     QString workdir() const;                       // empty for bare repos
     bool isBare() const;
 
+    // Opens the repository of the submodule at `path` (relative to the work tree): the checked-out
+    // submodule, or else its repository under .git/modules. Returns an invalid Repository if neither
+    // exists.
+    Repository openSubmodule(const QString &path) const;
+    // Submodule status flags (GIT_SUBMODULE_STATUS_*) of the submodule at `path`; 0 if unknown.
+    unsigned submoduleStatus(const QString &path) const;
+
     RefSet loadRefs() const;
     // Resolve a revision expression to a commit id. Returns null Oid if not found.
     Oid resolveCommit(const QString &spec, QString *error = nullptr) const;
@@ -54,6 +61,8 @@ public:
     QString configString(const QString &key, const QString &def = {}) const;
 
 private:
+    static Repository wrap(git_repository *r);
+
     RepoPtr m_repo;
     QString m_path;
 };

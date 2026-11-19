@@ -2,6 +2,8 @@
 // page while no repository is open. The open tabs are remembered between runs.
 #pragma once
 
+#include "git/Oid.h"
+
 #include <QMainWindow>
 #include <QStringList>
 
@@ -36,6 +38,10 @@ public:
     // paths in `args` are relative to. Throws GitError if there is no repository there.
     RepoTab *openRepository(const QString &path, const QStringList &args = {}, const QString &prefix = {},
                             bool makeCurrent = true);
+    // Opens the repository at `path` (in a new tab showing all branches, unless it is open
+    // already) and reveals `commit` there, scrolled to `line` of `file` if given. Reports failure
+    // in the status bar.
+    RepoTab *openRepositoryAt(const QString &path, const Oid &commit, const QString &file = {}, int line = 0);
     void closeTab(int index);
 
     int tabCount() const { return int(m_tabs.size()); }

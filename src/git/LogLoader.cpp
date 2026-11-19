@@ -50,6 +50,29 @@ bool PathFilter::matchesPath(const QString &path) const {
     return false;
 }
 
+namespace {
+
+// The entry at `path` in `tree`; for a path inside a submodule, the submodule's entry (so that a
+// commit moving the submodule counts as touching every path in it).
+git_tree_entry *entryOrSubmodule(git_tree *tree, const QByteArray &path) {
+    if (!tree) return nullptr;
+    git_tree_entry *e = nullptr;
+    if (git_tree_entry_bypath(&e, tree, path.constData()) == 0) return e;
+    git_error_clear();
+    for (qsizetype slash = path.indexOf('/'); slash > 0; slash = path.indexOf('/', slash + 1)) {
+        if (git_tree_entry_bypath(&e, tree, path.left(slash).constData()) < 0) break;
+        const git_object_t type = git_tree_entry_type(e);
+        if (type == GIT_OBJECT_COMMIT) return e;
+        git_tree_entry_free(e);
+        e = nullptr;
+        if (type != GIT_OBJECT_TREE) break;
+    }
+    git_error_clear();
+    return nullptr;
+}
+
+} // namespace
+
 bool PathFilter::treeSame(git_tree *a, git_tree *b) const {
     if (m_paths.isEmpty()) {
         if (!a || !b) return a == b;
@@ -63,10 +86,7 @@ bool PathFilter::treeSame(git_tree *a, git_tree *b) const {
                 continue;   // ids differ (checked above)
             }
             QByteArray path = p.toUtf8();
-            git_tree_entry *ea = nullptr, *eb = nullptr;
-            if (a && git_tree_entry_bypath(&ea, a, path.constData()) < 0) ea = nullptr;
-            if (b && git_tree_entry_bypath(&eb, b, path.constData()) < 0) eb = nullptr;
-            git_error_clear();
+            git_tree_entry *ea = entryOrSubmodule(a, path), *eb = entryOrSubmodule(b, path);
             bool same;
             if (!ea || !eb)
                 same = (ea == eb);
