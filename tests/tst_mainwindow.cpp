@@ -3,6 +3,7 @@
 #include "TestRepo.h"
 #include "model/CommitModel.h"
 #include "model/FileListModel.h"
+#include "ui/CommitListView.h"
 #include "ui/DiffView.h"
 #include "ui/MainWindow.h"
 #include "ui/PrefsDialog.h"
@@ -311,6 +312,22 @@ private slots:
         QVERIFY(!list->header()->isSectionHidden(CommitModel::DateColumn));
         QVERIFY(list->header()->isVisible());
         QVERIFY(list->header()->sectionSize(CommitModel::AuthorColumn) > 0);
+    }
+
+    void hoverRow() {
+        MainWindow w(repo->path(), {});
+        w.resize(1200, 900);
+        w.show();
+        QVERIFY(QTest::qWaitForWindowActive(&w));
+        waitLoaded(&w);
+        auto *list = child<CommitListView>(&w, "commitList");
+        QCOMPARE(list->hoverRow(), -1);
+        const QRect r = list->visualRect(model(&w)->index(2, 0));
+        QTest::mouseMove(list->viewport(), r.center());
+        QTRY_COMPARE(list->hoverRow(), 2);
+        QEvent leave(QEvent::Leave);
+        QApplication::sendEvent(list, &leave);
+        QCOMPARE(list->hoverRow(), -1);
     }
 
     void viewDialogRoundTrip() {

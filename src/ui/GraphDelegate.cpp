@@ -2,6 +2,7 @@
 
 #include "Settings.h"
 #include "model/CommitModel.h"
+#include "ui/CommitListView.h"
 #include "ui/RefPills.h"
 
 #include <QApplication>
@@ -154,6 +155,8 @@ void GraphDelegate::paint(QPainter *p, const QStyleOptionViewItem &optIn, const 
     // Subtle stripes on odd rows; the mark and the selection take precedence.
     QColor bg = row % 2 ? Settings::mix(st.bgColor, st.fgColor, 0.05) : st.bgColor;
     if (c && !m_model->marked().isNull() && c->id == m_model->marked()) bg = st.markBgColor;
+    if (auto *view = qobject_cast<const CommitListView *>(opt.widget); view && view->hoverRow() == row)
+        bg = Settings::mix(bg, st.selectBgColor, 0.5);
     if (opt.state & QStyle::State_Selected) bg = st.selectBgColor;
     p->fillRect(cell, bg);
 

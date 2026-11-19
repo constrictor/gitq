@@ -20,6 +20,33 @@ CommitListView::CommitListView(QWidget *parent) : QTreeView(parent) {
     setVerticalScrollMode(ScrollPerPixel);
     header()->setStretchLastSection(false);
     header()->setSectionsMovable(false);
+    setMouseTracking(true);
+}
+
+void CommitListView::setHoverRow(int row) {
+    if (row == m_hoverRow) return;
+    auto repaint = [this](int r) {
+        if (r < 0 || !model() || r >= model()->rowCount()) return;
+        const QRect rect = visualRect(model()->index(r, 0));
+        viewport()->update(QRect(0, rect.top(), viewport()->width(), rect.height()));
+    };
+    repaint(m_hoverRow);
+    m_hoverRow = row;
+    repaint(m_hoverRow);
+}
+
+void CommitListView::mouseMoveEvent(QMouseEvent *e) {
+    QTreeView::mouseMoveEvent(e);
+    const QModelIndex idx = indexAt(e->pos());
+    setHoverRow(idx.isValid() ? idx.row() : -1);
+    RefInfo ref;
+    const bool onRef = idx.isValid() && idx.column() == 0 && m_delegate && m_delegate->refAt(idx.row(), e->pos(), &ref);
+    viewport()->setCursor(onRef ? Qt::PointingHandCursor : Qt::ArrowCursor);
+}
+
+void CommitListView::leaveEvent(QEvent *e) {
+    QTreeView::leaveEvent(e);
+    setHoverRow(-1);
 }
 
 void CommitListView::setGraphDelegate(GraphDelegate *d) {
