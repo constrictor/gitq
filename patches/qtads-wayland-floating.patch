@@ -1,0 +1,382 @@
+Wayland: frameless floating dock containers that dock by their title bar
+
+A floating container on Wayland gets a compositor decoration. Dragging it only
+moves the window - the client never learns about the move - so the widget
+cannot be docked back by dragging its title bar, and the dock area title bar
+below it, which can, looks like a second, redundant title bar.
+
+Make the floating container frameless instead, so the dock area title bar is
+its only title bar: dragging it moves the window (xdg_toplevel_drag_v1) and
+docks it on a drop indicator. It gets the close button, and a double click
+maximizes. A thin border around the content resizes the window via
+QWindow::startSystemResize() and outlines it.
+
+Also make the dock manager window the transient parent of floating containers,
+so the compositor keeps them above the main window as on other platforms.
+
+Applied to Qt Advanced Docking System v5.1.1 by FetchContent (CMakeLists.txt).
+
+--- a/src/DockAreaTitleBar.cpp
++++ b/src/DockAreaTitleBar.cpp
+@@ -817,6 +817,15 @@
+ 	// empty
+ 	if (d->DockArea->dockContainer()->isFloating() && d->DockArea->dockContainer()->dockAreaCount() == 1)
+ 	{
++#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
++		// Wayland: this title bar is the title bar of the frameless floating
++		// widget, so a double click maximizes it like a window title bar
++		auto FloatingWidget = d->DockArea->dockContainer()->floatingWidget();
++		if (internal::isWayland() && FloatingWidget && event->button() == Qt::LeftButton)
++		{
++			FloatingWidget->onMaximizeRequest();
++		}
++#endif
+ 		return;
+ 	}
+ 
+--- a/src/DockAreaWidget.cpp
++++ b/src/DockAreaWidget.cpp
+@@ -430,7 +430,11 @@
+ 	}
+ 	else if (IsTopLevel)
+ 	{
+-		TitleBar->button(TitleBarButtonClose)->setVisible(!container->isFloating());
++		// Wayland: a floating widget is frameless and the title bar of its
++		// top level dock area is the window title bar, so it needs the close
++		// button that the window decoration provides on other platforms
++		TitleBar->button(TitleBarButtonClose)->setVisible(!container->isFloating()
++			|| internal::isWayland());
+ 		TitleBar->button(TitleBarButtonAutoHide)->setVisible(!container->isFloating());
+         // Undock and tabs should never show when auto hidden
+ 		TitleBar->button(TitleBarButtonUndock)->setVisible(!container->isFloating());
+--- a/src/FloatingDockContainer.cpp
++++ b/src/FloatingDockContainer.cpp
+@@ -28,6 +28,7 @@
+ //============================================================================
+ #include "FloatingDockContainer.h"
+ 
++#include <functional>
+ #include <iostream>
+ 
+ #include <QBoxLayout>
+@@ -43,6 +44,7 @@
+ #include <QMimeData>
+ #include <QDataStream>
+ #include <QWindow>
++#include <QPainter>
+ 
+ #include "DockContainerWidget.h"
+ #include "DockAreaWidget.h"
+@@ -64,6 +66,173 @@
+ 
+ namespace ads
+ {
++#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
++/**
++ * Wayland: floating dock containers are frameless, so that the dock area
++ * title bar is the only title bar. Dragging a compositor drawn window
++ * decoration only moves the window - the client is never told about the
++ * move - so a decorated floating widget could not be docked by dragging it
++ * by its title bar. Without a decoration the compositor provides no resize
++ * border either. This filter turns a thin margin around the dock container
++ * into one: it shows resize cursors, starts a compositor driven resize on a
++ * press and paints an outline that separates the window from the windows
++ * below it.
++ */
++class CWaylandFrameResizer : public QObject
++{
++public:
++	static constexpr int BorderWidth = 5;
++
++	CWaylandFrameResizer(QWidget* Window, QWidget* Frame)
++		: QObject(Window), m_Window(Window), m_Frame(Frame)
++	{
++		Frame->setContentsMargins(BorderWidth, BorderWidth, BorderWidth, BorderWidth);
++		Frame->setMouseTracking(true);
++		Frame->installEventFilter(this);
++	}
++
++	bool eventFilter(QObject* Object, QEvent* Event) override
++	{
++		if (Object != m_Frame)
++		{
++			return false;
++		}
++
++		switch (Event->type())
++		{
++		case QEvent::MouseMove:
++			setCursorFor(edgesAt(static_cast<QMouseEvent*>(Event)->position().toPoint()));
++			break;
++
++		case QEvent::Leave:
++			m_Frame->unsetCursor();
++			break;
++
++		case QEvent::MouseButtonPress:
++		{
++			auto MouseEvent = static_cast<QMouseEvent*>(Event);
++			const Qt::Edges Edges = edgesAt(MouseEvent->position().toPoint());
++			if (MouseEvent->button() == Qt::LeftButton && Edges
++			 && m_Window->windowHandle()
++			 && m_Window->windowHandle()->startSystemResize(Edges))
++			{
++				return true;
++			}
++			break;
++		}
++
++		case QEvent::Paint:
++		{
++			// The dock container paints nothing outside of its children, so
++			// the outline can be painted before it gets the event. No palette
++			// role contrasts with the window color in both light and dark
++			// themes, so the outline blends the text color into it.
++			const QColor Window = m_Frame->palette().color(QPalette::Window);
++			const QColor Text = m_Frame->palette().color(QPalette::WindowText);
++			const auto Blend = [](float a, float b) { return a + (b - a) * 0.3f; };
++			QPainter Painter(m_Frame);
++			Painter.setPen(QColor::fromRgbF(Blend(Window.redF(), Text.redF()),
++				Blend(Window.greenF(), Text.greenF()), Blend(Window.blueF(), Text.blueF())));
++			Painter.drawRect(m_Frame->rect().adjusted(0, 0, -1, -1));
++			break;
++		}
++
++		default:
++			break;
++		}
++		return false;
++	}
++
++private:
++	Qt::Edges edgesAt(const QPoint& Pos) const
++	{
++		Qt::Edges Edges;
++		if (m_Window->isMaximized() || m_Window->isFullScreen())
++		{
++			return Edges;
++		}
++
++		// The corners are larger than the border, so that they are easy to hit
++		const int Corner = 4 * BorderWidth;
++		const QRect r = m_Frame->rect();
++		const bool Left = Pos.x() < BorderWidth;
++		const bool Right = Pos.x() >= r.width() - BorderWidth;
++		const bool Top = Pos.y() < BorderWidth;
++		const bool Bottom = Pos.y() >= r.height() - BorderWidth;
++		if (!Left && !Right && !Top && !Bottom)
++		{
++			return Edges;
++		}
++
++		Edges.setFlag(Qt::LeftEdge, Pos.x() < Corner);
++		Edges.setFlag(Qt::RightEdge, Pos.x() >= r.width() - Corner);
++		Edges.setFlag(Qt::TopEdge, Pos.y() < Corner);
++		Edges.setFlag(Qt::BottomEdge, Pos.y() >= r.height() - Corner);
++		return Edges;
++	}
++
++	void setCursorFor(Qt::Edges Edges)
++	{
++		if (!Edges)
++		{
++			m_Frame->unsetCursor();
++		}
++		else if (Edges == (Qt::TopEdge | Qt::LeftEdge) || Edges == (Qt::BottomEdge | Qt::RightEdge))
++		{
++			m_Frame->setCursor(Qt::SizeFDiagCursor);
++		}
++		else if (Edges == (Qt::TopEdge | Qt::RightEdge) || Edges == (Qt::BottomEdge | Qt::LeftEdge))
++		{
++			m_Frame->setCursor(Qt::SizeBDiagCursor);
++		}
++		else if (Edges & (Qt::LeftEdge | Qt::RightEdge))
++		{
++			m_Frame->setCursor(Qt::SizeHorCursor);
++		}
++		else
++		{
++			m_Frame->setCursor(Qt::SizeVerCursor);
++		}
++	}
++
++	QWidget* m_Window;
++	QWidget* m_Frame;
++};
++
++
++/**
++ * Wayland: calls the given function once, after the first paint of the
++ * watched widget, that is, when its window is mapped
++ */
++class CWaylandFirstPaintWatcher : public QObject
++{
++public:
++	CWaylandFirstPaintWatcher(QWidget* Watched, QObject* Parent, std::function<void()> Callback)
++		: QObject(Parent), m_Callback(std::move(Callback))
++	{
++		Watched->installEventFilter(this);
++	}
++
++	bool eventFilter(QObject* Object, QEvent* Event) override
++	{
++		if (Event->type() == QEvent::Paint)
++		{
++			Object->removeEventFilter(this);
++			// Leave the paint event before the callback changes windows
++			QMetaObject::invokeMethod(this, [this]()
++			{
++				m_Callback();
++				deleteLater();
++			}, Qt::QueuedConnection);
++		}
++		return false;
++	}
++
++private:
++	std::function<void()> m_Callback;
++};
++#endif
++
+ #ifdef Q_OS_WIN
+ #if 0 // set to 1 if you need this function for debugging
+ /**
+@@ -385,6 +554,7 @@
+     CFloatingWidgetTitleBar* TitleBar = nullptr;
+ 	bool IsResizing = false;
+     bool MousePressed = false;
++	QPointer<QObject> TransientParentWatcher;
+ #endif
+ 
+ 	/**
+@@ -392,6 +562,14 @@
+ 	 */
+ 	FloatingDockContainerPrivate(CFloatingDockContainer *_public);
+ 
++#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
++	/**
++	 * Wayland: makes the dock manager window the transient parent of the
++	 * floating widget, see showEvent()
++	 */
++	void updateWaylandTransientParent();
++#endif
++
+ 	void titleMouseReleaseEvent();
+ 	void updateDropOverlays(const QPoint &GlobalPos);
+ 
+@@ -663,15 +841,21 @@
+ 	}
+ 
+ 	// Wayland does not allow clients to move windows, so the custom title
+-	// bar cannot work there - dragging it would not move the window. Always
+-	// use a native window so that the user can move the floating widget
+-	// via the window decoration provided by the compositor or by Qt.
++	// bar cannot work there - dragging it would not move the window. And a
++	// window decoration drawn by the compositor only moves the window
++	// without telling the client, so it cannot dock the floating widget.
++	// The floating widget is frameless instead: the dock area title bar,
++	// which is always visible on Wayland, is its title bar. Dragging it
++	// moves the window via the xdg_toplevel_drag_v1 platform drag and docks
++	// it when it is dropped on a dock overlay (see startPlatformDrag()).
+ 	if (internal::isWayland())
+ 	{
+-		native_window = true;
++		setTitleBarWidget(new QWidget());
++		setWindowFlags(Qt::Window | Qt::FramelessWindowHint
++			| Qt::WindowMaximizeButtonHint | Qt::WindowCloseButtonHint);
++		new CWaylandFrameResizer(this, d->DockContainer);
+ 	}
+-
+-	if (native_window)
++	else if (native_window)
+ 	{
+ 		setTitleBarWidget(new QWidget());
+ 		setWindowFlags(Qt::Window | Qt::WindowMaximizeButtonHint | Qt::CustomizeWindowHint | Qt::WindowCloseButtonHint);
+@@ -1008,11 +1192,60 @@
+ }
+ 
+ 
++#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
++//============================================================================
++void FloatingDockContainerPrivate::updateWaylandTransientParent()
++{
++	// The floating widget has no parent widget on Wayland (see the
++	// constructor), so make the dock manager window its transient parent.
++	// The compositor then keeps it above that window like the floating
++	// widgets on the other platforms, instead of hiding it behind the main
++	// window as soon as the user clicks into the main window.
++	QWindow* Window = _this->windowHandle();
++	QWidget* ParentWidget = DockManager ? DockManager->window() : nullptr;
++	if (!Window || !ParentWidget || ParentWidget == _this)
++	{
++		return;
++	}
++
++	QWindow* ParentWindow = ParentWidget->windowHandle();
++	if (ParentWindow && ParentWindow->isExposed())
++	{
++		// The show event arrives before the window is mapped, so the parent
++		// is part of the initial xdg_toplevel state
++		Window->setTransientParent(ParentWindow);
++		return;
++	}
++
++	// A floating widget restored before the dock manager window is shown
++	// would be mapped before its parent, and the compositor ignores an
++	// unmapped parent. Map it again once the parent window is mapped.
++	if (TransientParentWatcher)
++	{
++		return;
++	}
++	QPointer<CFloatingDockContainer> Floating(_this);
++	TransientParentWatcher = new CWaylandFirstPaintWatcher(ParentWidget, _this, [Floating]()
++	{
++		if (Floating && Floating->isVisible())
++		{
++			Floating->hide();
++			Floating->show();
++		}
++	});
++}
++#endif
++
++
+ //============================================================================
+ void CFloatingDockContainer::showEvent(QShowEvent *event)
+ {
+ 	Super::showEvent(event);
+ #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
++	if (internal::isWayland())
++	{
++		d->updateWaylandTransientParent();
++	}
+     if (CDockManager::testConfigFlag(CDockManager::FocusHighlighting))
+     {
+         this->window()->activateWindow();
+@@ -1344,19 +1577,14 @@
+ 	if (DragOffset)
+ 	{
+ 		DragStartOffset = *DragOffset;
+-		// The new floating window is a native window on Wayland (forced in the
+-		// constructor), so it has a title bar / decoration around the content -
+-		// drawn either by the compositor or by Qt's client-side decoration.
++		// The new floating window is frameless on Wayland (see the
++		// constructor), but it has a resize border around the dock container.
+ 		// The supplied offset is relative to the source tab/area content, so
+-		// shift it by the window frame's top and left margins to keep the
+-		// grabbed content point - not the decoration - under the cursor. With
+-		// server-side decorations the margins are 0 and no shift is applied.
+-		if (FloatingWidget->windowHandle())
+-		{
+-			const QMargins Frame = FloatingWidget->windowHandle()->frameMargins();
+-			DragStartOffset.rx() += Frame.left();
+-			DragStartOffset.ry() += Frame.top();
+-		}
++		// shift it by the border to keep the grabbed content point under the
++		// cursor.
++		const QMargins Border = FloatingWidget->dockContainer()->contentsMargins();
++		DragStartOffset.rx() += Border.left();
++		DragStartOffset.ry() += Border.top();
+ 	}
+ 	else
+ 	{

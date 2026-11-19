@@ -48,7 +48,8 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
 - Tabs: several repositories in one window, restored on the next start; welcome page with recent
   repositories.
 - Visual Studio style dockable panes: drag the Commits, Diff or Files title bar (or its tab, shown at the bottom when panes share an area) to dock it beside another
-  pane, tab it with one, or float it in its own window. All repository tabs share the layout, which is remembered; View ▸ Reset layout
+  pane, tab it with one, or float it in its own window. To dock a floating pane again, drag its title bar onto one of the drop markers
+  that appear over the main window. All repository tabs share the layout, which is remembered; View ▸ Reset layout
   restores the gitk arrangement and the View menu reopens closed panes.
 - Commit list with graph, ref labels (heads, remotes, tags, HEAD in bold), author, date;
   streaming load; long edges elided with arrows like gitk; local uncommitted / staged changes rows.

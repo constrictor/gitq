@@ -42,6 +42,8 @@ set(BUILD_EXAMPLES OFF)
 FetchContent_Declare(qtads
   URL https://github.com/githubuser0xFFFF/Qt-Advanced-Docking-System/archive/refs/tags/v5.1.1.tar.gz
   URL_HASH SHA256=9ce947acbb1984946f9145c976e42e6984f99b98fb414dd7354a290af6d4ff04
+  # Floating panes on Wayland: frameless, docked by dragging their title bar (see the patch).
+  PATCH_COMMAND patch -p1 -i ${CMAKE_CURRENT_SOURCE_DIR}/patches/qtads-wayland-floating.patch
   EXCLUDE_FROM_ALL SYSTEM)
 FetchContent_MakeAvailable(qtads)
 
