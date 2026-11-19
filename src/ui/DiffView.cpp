@@ -11,6 +11,7 @@
 #include <QHelpEvent>
 #include <QMouseEvent>
 #include <QResizeEvent>
+#include <QTimer>
 #include <QPainter>
 #include <QPlainTextDocumentLayout>
 #include <QTextObjectInterface>
@@ -198,6 +199,10 @@ protected:
             f.setForeground(c);
             return f;
         };
+        if (style == DiffView::SplitStyle) {
+            highlightSplit(n, text);
+            return;
+        }
         const int marks = n < m_view->m_markLen.size() ? m_view->m_markLen[n] : 0;
         highlightSyntax(n, text, style, marks);
         switch (style) {
@@ -281,6 +286,45 @@ private:
         for (const Syntax::Span &s : std::as_const(spans)) setFormat(s.start, s.len, colors[s.token]);
     }
 
+    const Syntax::Language *language(const QString &path) {
+        auto it = m_languages.constFind(path);
+        if (it == m_languages.cend()) it = m_languages.insert(path, Syntax::languageFor(path));
+        return *it;
+    }
+
+    // A side-by-side row: each side highlighted on its own (following that side's state), then
+    // the changed words' tint.
+    void highlightSplit(int n, const QString &text) {
+        const DiffView::SplitRow row = m_view->m_splitRows.value(n);
+        const int w = m_view->m_splitWidth, right = w + DiffView::kSplitMiddle;
+        int prev = previousBlockState();
+        if (prev < 0) prev = 0;
+        int oldState = prev & 0xf, newState = (prev >> 4) & 0xf;
+        const Syntax::Language *lang = Settings::instance().syntaxHighlighting ? language(m_view->m_meta[n].path) : nullptr;
+        if (lang) {
+            QTextCharFormat colors[Syntax::TokenCount];
+            for (int t = 0; t < Syntax::TokenCount; ++t) colors[t].setForeground(Syntax::color(Syntax::Token(t)));
+            colors[Syntax::Comment].setFontItalic(true);
+            auto side = [&](const QString &part, int shift, int state) {
+                QList<Syntax::Span> spans;
+                const int s = Syntax::highlightLine(*lang, part, 0, state, &spans);
+                for (const Syntax::Span &sp : std::as_const(spans)) setFormat(sp.start + shift, sp.len, colors[sp.token]);
+                return s;
+            };
+            if (!row.left.isNull()) oldState = side(text.left(w), 0, oldState);
+            if (!row.right.isNull()) newState = side(text.mid(right), right, newState);
+        }
+        setCurrentBlockState(oldState | (newState << 4));
+        for (const auto &r : m_view->m_wordRanges.value(n)) {
+            const QColor bg = DiffView::wordBg(r.kind == DiffView::OldStyle);
+            for (int i = r.start; i < r.start + r.len && i < text.size(); ++i) {
+                QTextCharFormat f = format(i);
+                f.setBackground(bg);
+                setFormat(i, 1, f);
+            }
+        }
+    }
+
     DiffView *m_view;
     QHash<QString, const Syntax::Language *> m_languages;
 };
@@ -290,6 +334,12 @@ DiffView::DiffView(QWidget *parent) : QPlainTextEdit(parent) {
     document()->documentLayout()->registerHandler(kObjectType, new HeaderObjects(this));
     new DiffHighlighter(this);
     m_gutter = new LineGutter(this);
+    m_resplitTimer = new QTimer(this);
+    m_resplitTimer->setSingleShot(true);
+    m_resplitTimer->setInterval(150);
+    connect(m_resplitTimer, &QTimer::timeout, this, [this] {
+        if (m_splitWidth > 0 && splitColumns() != m_splitWidth) rerenderBody();
+    });
     connect(this, &QPlainTextEdit::updateRequest, m_gutter, [this] { m_gutter->update(); });
     setReadOnly(true);
     setUndoRedoEnabled(false);
@@ -303,7 +353,8 @@ void DiffView::applyFonts() {
     const Settings &st = Settings::instance();
     setFont(st.textFont);
     setTabStopDistance(QFontMetricsF(st.textFont).horizontalAdvance(QLatin1Char(' ')) * qMax(1, st.tabStop));
-    setLineWrapMode(st.wrapDiff ? WidgetWidth : NoWrap);
+    // Side-by-side rows are wrapped by the view itself, to the column width.
+    setLineWrapMode(st.wrapDiff && !m_sideBySide ? WidgetWidth : NoWrap);
     QPalette pal = palette();
     pal.setColor(QPalette::Base, st.bgColor);
     pal.setColor(QPalette::Text, st.fgColor);
@@ -324,6 +375,9 @@ void DiffView::clearAll() {
     m_cardPills.clear();
     m_cardId.clear();
     m_singleNumberColumn = false;
+    m_splitRows.clear();
+    m_splitWidth = 0;
+    m_hasResult = false;
     m_nearbyBlock = -1;
     m_lastTopFile.clear();
     m_currentSearchHit = QTextCursor();
@@ -526,6 +580,9 @@ void DiffView::showNearby(const NearbyRefs &n, int maxRefs) {
     QMap<int, FileHeader> shifted;
     for (auto it = m_fileStarts.cbegin(); it != m_fileStarts.cend(); ++it) shifted.insert(it.key() + k, it.value());
     m_fileStarts = shifted;
+    QHash<int, SplitRow> rows;
+    for (auto it = m_splitRows.cbegin(); it != m_splitRows.cend(); ++it) rows.insert(it.key() + k, it.value());
+    m_splitRows = rows;
     m_headerEnd += k;
     m_cardEnd += k;
     m_nearbyBlock = -1;
@@ -542,7 +599,7 @@ int DiffView::gutterWidth() const {
     if (m_gutterDigits == 0) return 0;
     const int digit = QFontMetrics(Settings::instance().textFont).horizontalAdvance(QLatin1Char('9'));
     const int column = m_gutterDigits * digit + 10;
-    return (m_singleNumberColumn ? column : 2 * column) + 6;
+    return (m_singleNumberColumn || m_splitWidth > 0 ? column : 2 * column) + 6;
 }
 
 void DiffView::updateGutter() {
@@ -558,6 +615,7 @@ void DiffView::updateGutter() {
 
 void DiffView::resizeEvent(QResizeEvent *e) {
     QPlainTextEdit::resizeEvent(e);
+    if (m_splitWidth > 0) m_resplitTimer->start();
     const QRect cr = contentsRect();
     m_gutter->setGeometry(cr.left(), cr.top(), gutterWidth(), cr.height());
 }
@@ -603,6 +661,16 @@ void DiffView::paintGutter(QPaintEvent *e) {
         }
         if (n < m_style.size() && (m_style[n] == OldStyle || m_style[n] == NewStyle))
             p.fillRect(QRectF(0, r.top(), w - 1, r.height()), wordBg(m_style[n] == OldStyle));
+        if (auto split = m_splitRows.constFind(n); split != m_splitRows.cend()) {
+            // Side by side: the old side's numbers here, the new side's between the columns.
+            if (split->left == QLatin1Char('-')) p.fillRect(QRectF(0, r.top(), w - 1, r.height()), wordBg(true));
+            if (m_meta[n].oldLine > 0) {
+                p.setPen(number);
+                p.drawText(QRectF(0, r.top(), column - 4, QFontMetrics(font).height()), Qt::AlignRight | Qt::AlignVCenter,
+                           QString::number(m_meta[n].oldLine));
+            }
+            continue;
+        }
         if (n >= m_meta.size() || m_meta[n].kind.isNull()) continue;
         const DiffLineInfo &m = m_meta[n];
         p.setPen(number);
@@ -651,11 +719,50 @@ void DiffView::paintEvent(QPaintEvent *e) {
             const int n = b.blockNumber();
             if (n >= m_style.size()) break;
             const quint8 style = m_style[n];
+            if (style == SplitStyle) {
+                const SplitRow row = m_splitRows.value(n);
+                const double mid = splitRightX();
+                const double cw = QFontMetricsF(st.textFont).horizontalAdvance(QLatin1Char(' '));
+                const double leftEnd = mid - (kSplitMiddle - 1) * cw;
+                const QBrush filler(Settings::mix(st.bgColor, st.fgColor, 0.12), Qt::BDiagPattern);
+                auto side = [&](QChar kind, double x1, double x2, bool old) {
+                    const QRectF rr(x1, r.top(), x2 - x1, r.height());
+                    if (kind.isNull()) p.fillRect(rr, filler);
+                    else if (kind != QLatin1Char(' ')) p.fillRect(rr, old ? st.diffOldBg : st.diffNewBg);
+                };
+                side(row.left, 0, leftEnd, true);
+                side(row.right, mid, viewport()->width(), false);
+                if (row.right == QLatin1Char('+')) p.fillRect(QRectF(leftEnd, r.top(), mid - leftEnd, r.height()), wordBg(false));
+                continue;
+            }
             const QColor bg = style == OldStyle ? st.diffOldBg : style == NewStyle ? st.diffNewBg : style == HunkStyle ? hunkBg : QColor();
             if (bg.isValid()) p.fillRect(QRectF(0, r.top(), viewport()->width(), r.height()), bg);
         }
     }
     QPlainTextEdit::paintEvent(e);
+    if (m_splitWidth > 0 && !m_splitRows.isEmpty()) {
+        // Side by side: the divider and the new side's line numbers between the columns.
+        QPainter p(viewport());
+        const QPointF offset = contentOffset();
+        const double cw = QFontMetricsF(st.textFont).horizontalAdvance(QLatin1Char(' '));
+        const double mid = splitRightX(), leftEnd = mid - (kSplitMiddle - 1) * cw;
+        p.setFont(st.textFont);
+        const QColor number = Settings::mix(st.fgColor, st.bgColor, 0.55);
+        const QColor divider = Settings::mix(st.bgColor, st.fgColor, 0.15);
+        for (QTextBlock b = firstVisibleBlock(); b.isValid(); b = b.next()) {
+            const QRectF r = blockBoundingGeometry(b).translated(offset);
+            if (r.top() > e->rect().bottom()) break;
+            const int n = b.blockNumber();
+            if (!m_splitRows.contains(n)) continue;
+            p.setPen(divider);
+            p.drawLine(QPointF(leftEnd + 0.5, r.top()), QPointF(leftEnd + 0.5, r.bottom() + 1));
+            if (m_meta[n].newLine > 0) {
+                p.setPen(number);
+                p.drawText(QRectF(leftEnd, r.top(), mid - leftEnd - cw, r.height()), Qt::AlignRight | Qt::AlignVCenter,
+                           QString::number(m_meta[n].newLine));
+            }
+        }
+    }
     {
         // File header bars over their (transparent) text, and the sticky one at the top.
         QPainter p(viewport());
@@ -867,8 +974,49 @@ bool DiffView::viewportEvent(QEvent *e) {
     return QPlainTextEdit::viewportEvent(e);
 }
 
+void DiffView::setSideBySide(bool on) {
+    m_sideBySide = on;
+    applyFonts();
+}
+
+int DiffView::splitColumns() const {
+    const double cw = QFontMetricsF(Settings::instance().textFont).horizontalAdvance(QLatin1Char(' '));
+    const double avail = viewport()->width() - 2 * document()->documentMargin() - 4;
+    const int total = int(avail / qMax(1.0, cw)) - 1;
+    return qMax(16, (total - kSplitMiddle) / 2);
+}
+
+double DiffView::splitRightX() const {
+    const double cw = QFontMetricsF(Settings::instance().textFont).horizontalAdvance(QLatin1Char(' '));
+    return contentOffset().x() + document()->documentMargin() + (m_splitWidth + kSplitMiddle) * cw - cw / 2;
+}
+
+void DiffView::rerenderBody() {
+    if (!m_hasResult) return;
+    const int keep = verticalScrollBar()->value();
+    QTextCursor c(document());
+    if (m_headerEnd > 0) {
+        c.setPosition(document()->findBlockByNumber(m_headerEnd - 1).position());
+        c.movePosition(QTextCursor::EndOfBlock);
+    }
+    c.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
+    c.removeSelectedText();
+    m_meta.resize(m_headerEnd);
+    m_style.resize(m_headerEnd);
+    m_markLen.resize(m_headerEnd);
+    for (auto it = m_wordRanges.begin(); it != m_wordRanges.end();) it = it.key() >= m_headerEnd ? m_wordRanges.erase(it) : std::next(it);
+    m_fileStarts.erase(m_fileStarts.lowerBound(m_headerEnd), m_fileStarts.end());
+    m_splitRows.clear();
+    const DiffResult diff = m_lastResult;
+    appendDiff(diff);
+    verticalScrollBar()->setValue(keep);
+}
+
 void DiffView::appendDiff(const DiffResult &diff) {
     const int keep = verticalScrollBar()->value();
+    m_lastResult = diff;
+    m_hasResult = true;
+    m_splitWidth = m_sideBySide && m_mode == ShowDiff ? splitColumns() : 0;
     if (!diff.error.isEmpty()) addBodyLine(diff.error, ErrorStyle, {});
     for (const FileDiff &f : diff.files) {
         if (f.submodule >= 0 && f.submodule < diff.submodules.size() && diff.submodules[f.submodule].detailed)
@@ -878,6 +1026,12 @@ void DiffView::appendDiff(const DiffResult &diff) {
     }
     flushBody();
     updateGutter();
+    // The gutter's width may have changed the room for the columns.
+    if (m_splitWidth > 0 && !m_splitRows.isEmpty() && splitColumns() != m_splitWidth) {
+        rerenderBody();
+        return;
+    }
+    if (m_splitRows.isEmpty()) m_splitWidth = 0;
     verticalScrollBar()->setValue(keep);
     updateExtraSelections();
     onScroll();
@@ -900,6 +1054,29 @@ void DiffView::flushBody() {
     if (!empty) cur.insertBlock();
     cur.insertText(m_pending.join(QLatin1Char('\n')), plainFormat());
     m_pending.clear();
+}
+
+QList<QPair<int, int>> DiffView::pairSimilarLines(const QStringList &olds, const QStringList &news) {
+    // Each old line goes with the most similar new line after the previous pair's (looking a few
+    // lines ahead), if they are similar enough.
+    QList<QPair<int, int>> pairs;
+    int from = 0;
+    for (int i = 0; i < olds.size() && from < news.size(); ++i) {
+        double best = 0;
+        int bestAt = -1;
+        for (int k = from; k < qMin(int(news.size()), from + 8); ++k) {
+            QList<WordRange> o, n;
+            const double sim = changedWords(olds[i], news[k], 0, &o, &n);
+            if (sim > best) {
+                best = sim;
+                bestAt = k;
+            }
+        }
+        if (bestAt < 0 || best < 0.4) continue;
+        pairs.append({i, bestAt});
+        from = bestAt + 1;
+    }
+    return pairs;
 }
 
 double DiffView::changedWords(const QString &oldText, const QString &newText, int offset, QList<WordRange> *oldRanges,
@@ -933,6 +1110,122 @@ double DiffView::changedWords(const QString &oldText, const QString &newText, in
     return 2.0 * same / total;
 }
 
+void DiffView::renderSplitFile(const FileDiff &f, const DiffLineInfo &fileMeta) {
+    const QString path = f.path();
+    const int tab = qMax(1, Settings::instance().tabStop);
+    auto expand = [tab](const QString &s) {
+        if (!s.contains(QLatin1Char('\t'))) return s;
+        QString out;
+        for (QChar c : s) {
+            if (c == QLatin1Char('\t')) out += QString(tab - out.size() % tab, QLatin1Char(' '));
+            else out += c;
+        }
+        return out;
+    };
+    bool inHunks = false;
+    int oldNo = 0, newNo = 0;
+    QList<SideLine> dels, adds;
+    // A change: similar lines side by side; the lines between them side by side as they come.
+    auto flush = [&] {
+        QStringList olds, news;
+        for (const SideLine &l : std::as_const(dels)) olds << l.text;
+        for (const SideLine &l : std::as_const(adds)) news << l.text;
+        QList<QPair<int, int>> pairs = pairSimilarLines(olds, news);
+        pairs.append({int(dels.size()), int(adds.size())});   // the end
+        int di = 0, ai = 0;
+        for (const auto &[i, k] : std::as_const(pairs)) {
+            while (di < i || ai < k) {
+                addSplitRows(path, di < i ? dels[di] : SideLine(), ai < k ? adds[ai] : SideLine());
+                if (di < i) ++di;
+                if (ai < k) ++ai;
+            }
+            if (i < dels.size() && k < adds.size()) addSplitRows(path, dels[i], adds[k]);
+            di = i + 1;
+            ai = k + 1;
+        }
+        dels.clear();
+        adds.clear();
+    };
+    for (const QString &line : f.lines) {
+        if (!inHunks) {
+            if (!line.startsWith(QLatin1String("@@"))) {
+                if (!line.startsWith(QLatin1String("diff --")) && !line.startsWith(QLatin1String("--- ")) &&
+                    !line.startsWith(QLatin1String("+++ ")))
+                    addBodyLine(line, MetaStyle, fileMeta);
+                continue;
+            }
+            inHunks = true;
+        }
+        if (line.startsWith(QLatin1String("@@"))) {
+            flush();
+            auto m = hunkRe().match(line);
+            if (m.hasMatch()) {
+                oldNo = m.captured(1).toInt();
+                newNo = m.captured(2).toInt();
+            }
+            addBodyLine(line, HunkStyle, fileMeta);
+            continue;
+        }
+        if (line.startsWith(QLatin1Char('\\'))) {
+            flush();
+            addBodyLine(line, MetaStyle, fileMeta);
+            continue;
+        }
+        const QChar kind = line.isEmpty() ? QLatin1Char(' ') : line[0];
+        const QString text = expand(line.mid(1));
+        if (kind == QLatin1Char('-')) {
+            if (!adds.isEmpty()) flush();
+            dels.append({kind, text, oldNo++});
+        } else if (kind == QLatin1Char('+')) {
+            adds.append({kind, text, newNo++});
+        } else {
+            flush();
+            addSplitRows(path, {kind, text, oldNo++}, {kind, text, newNo++});
+        }
+    }
+    flush();
+}
+
+void DiffView::addSplitRows(const QString &path, const SideLine &left, const SideLine &right) {
+    const int w = m_splitWidth;
+    QList<WordRange> lw, rw;
+    if (left.kind == QLatin1Char('-') && right.kind == QLatin1Char('+') && changedWords(left.text, right.text, 0, &lw, &rw) < 0.4) {
+        lw.clear();
+        rw.clear();
+    }
+    auto chunks = [w](const SideLine &l) {
+        QStringList out;
+        if (!l.kind.isNull())
+            for (int i = 0; i < l.text.size(); i += w) out << l.text.mid(i, w);
+        if (out.isEmpty()) out << QString();
+        return out;
+    };
+    const QStringList lc = chunks(left), rc = chunks(right);
+    const int rows = int(qMax(lc.size(), rc.size()));
+    for (int r = 0; r < rows; ++r) {
+        const QString text = lc.value(r).leftJustified(w, QLatin1Char(' ')) + QString(kSplitMiddle, QLatin1Char(' ')) + rc.value(r);
+        // Word ranges of this piece of each side.
+        QList<WordRange> ranges;
+        auto clip = [&](const QList<WordRange> &list, int shift, quint8 kind) {
+            for (const WordRange &wr : list) {
+                const int s = qMax(wr.start, r * w), e = qMin(wr.start + wr.len, (r + 1) * w);
+                if (e > s) ranges.append({s - r * w + shift, e - s, kind});
+            }
+        };
+        clip(lw, 0, OldStyle);
+        clip(rw, w + kSplitMiddle, NewStyle);
+        DiffLineInfo meta;
+        meta.path = path;
+        meta.kind = left.kind == QLatin1Char('-') ? QLatin1Char('-') : right.kind == QLatin1Char('+') ? QLatin1Char('+') : QLatin1Char(' ');
+        if (r == 0) {
+            meta.oldLine = left.kind.isNull() ? 0 : left.line;
+            meta.newLine = right.kind.isNull() ? 0 : right.line;
+        }
+        m_splitRows.insert(int(m_meta.size()), {left.kind, right.kind});
+        addBodyLine(text, SplitStyle, meta, ranges, 0);
+    }
+}
+
 void DiffView::renderFile(const FileDiff &f) {
     const int n = qMax(1, f.numParents);
     FileHeader header;
@@ -957,6 +1250,10 @@ void DiffView::renderFile(const FileDiff &f) {
     DiffLineInfo fileMeta;
     fileMeta.path = f.path();
     addBodyLine(header.title, FileSepStyle, fileMeta);
+    if (m_splitWidth > 0 && n == 1) {
+        renderSplitFile(f, fileMeta);
+        return;
+    }
 
     bool inHunks = false;
     int oldNo = 0, newNo = 0;
@@ -971,29 +1268,12 @@ void DiffView::renderFile(const FileDiff &f) {
     };
     QList<RunLine> lineDels, lineAdds;
     auto flushLines = [&] {
-        // Pair each removed line with the most similar added line not before the previous pair's
-        // (looking a few lines ahead), if they are similar enough.
         QList<QList<WordRange>> delWords(lineDels.size()), addWords(lineAdds.size());
-        int from = 0;
-        for (int i = 0; i < lineDels.size() && from < lineAdds.size(); ++i) {
-            double best = 0;
-            int bestAt = -1;
-            QList<WordRange> bestOld, bestNew;
-            for (int k = from; k < qMin(int(lineAdds.size()), from + 8); ++k) {
-                QList<WordRange> o, nw;
-                const double sim = changedWords(lineDels[i].text.mid(1), lineAdds[k].text.mid(1), 1, &o, &nw);
-                if (sim > best) {
-                    best = sim;
-                    bestAt = k;
-                    bestOld = o;
-                    bestNew = nw;
-                }
-            }
-            if (bestAt < 0 || best < 0.4) continue;
-            delWords[i] = bestOld;
-            addWords[bestAt] = bestNew;
-            from = bestAt + 1;
-        }
+        QStringList olds, news;
+        for (const RunLine &l : std::as_const(lineDels)) olds << l.text.mid(1);
+        for (const RunLine &l : std::as_const(lineAdds)) news << l.text.mid(1);
+        for (const auto &[i, k] : pairSimilarLines(olds, news))
+            changedWords(olds[i], news[k], 1, &delWords[i], &addWords[k]);
         for (int i = 0; i < lineDels.size(); ++i) addBodyLine(lineDels[i].text, OldStyle, lineDels[i].meta, delWords[i], 1);
         for (int i = 0; i < lineAdds.size(); ++i) addBodyLine(lineAdds[i].text, NewStyle, lineAdds[i].meta, addWords[i], 1);
         lineDels.clear();
@@ -1275,7 +1555,17 @@ void DiffView::onScroll() {
 
 DiffLineInfo DiffView::lineInfoAt(const QPoint &pos) const {
     int b = cursorForPosition(pos).blockNumber();
-    return b >= 0 && b < m_meta.size() ? m_meta[b] : DiffLineInfo();
+    if (b < 0 || b >= m_meta.size()) return {};
+    DiffLineInfo info = m_meta[b];
+    auto split = m_splitRows.constFind(b);
+    if (split == m_splitRows.cend()) return info;
+    // Side by side: the line on the side clicked.
+    const bool right = pos.x() >= splitRightX() - QFontMetricsF(Settings::instance().textFont).horizontalAdvance(QLatin1Char(' ')) * kSplitMiddle / 2;
+    info.kind = right ? split->right : split->left;
+    if (info.kind.isNull()) return {};
+    if (right && info.kind != QLatin1Char(' ')) info.oldLine = 0;
+    if (!right && info.kind != QLatin1Char(' ')) info.newLine = 0;
+    return info;
 }
 
 void DiffView::setSearchText(const QString &text) {

@@ -84,8 +84,8 @@ gitq fills the gap with a fast, focused history browser that:
 
 - Author, committer, tags, clickable parent/child links, and the branches containing the commit and
   the nearest tags before/after it (computed in the background).
-- Unified diff with configurable context and whitespace handling, word-level diff modes, and views
-  of the old or new file version. Merge commits show a combined diff.
+- Unified or side-by-side diff with configurable context and whitespace handling, word-level diff
+  modes, syntax highlighting, and views of the old or new file version. Merge commits show a combined diff.
 - Search within the diff.
 - Submodule changes: the submodule's commits between the two recorded commits, and optionally its
   file changes shown inline as files under the submodule's path; opening the submodule in its own tab.

@@ -23,6 +23,7 @@
 #include <QListView>
 #include <QListWidget>
 #include <QTabBar>
+#include <QToolButton>
 #include <QRadioButton>
 #include <QSettings>
 #include <QStandardPaths>
@@ -359,6 +360,43 @@ private slots:
         // A click on it goes back to the top of the file.
         QTest::mouseClick(diff->viewport(), Qt::LeftButton, {}, QPoint(diff->viewport()->width() / 2, 4));
         QTRY_VERIFY(diff->verticalScrollBar()->value() < 20);
+    }
+
+    void sideBySide() {
+        MainWindow w(repo->path(), {});
+        w.resize(1200, 900);
+        w.show();
+        waitLoaded(&w);
+        selectId(&w, fixId);
+        auto *diff = child<DiffView>(&w, "diffView");
+        child<QToolButton>(&w, "viewSplit")->click();
+        QVERIFY(Settings::instance().sideBySide);
+        // The old and new versions of the changed line share a row.
+        auto row = [&] {
+            for (const QString &l : diffText(&w).split(QLatin1Char('\n')))
+                if (l.contains(QStringLiteral("int x = 1;")) && l.contains(QStringLiteral("int x = 3;"))) return l;
+            return QString();
+        };
+        QTRY_VERIFY(!row().isEmpty());
+        QTest::qWait(300);   // a re-layout for the final width, if any
+        QCOMPARE(diff->horizontalScrollBar()->maximum(), 0);
+        QVERIFY(row().indexOf(QStringLiteral("int x = 3;")) > row().indexOf(QStringLiteral("int x = 1;")));
+        // Each side's line: right-clicking the left half gives the old line, the right half the new one.
+        const QTextBlock block = diff->document()->find(QStringLiteral("int x = 1;")).block();
+        const QRect r = diff->cursorRect(QTextCursor(block));
+        const DiffLineInfo left = diff->lineInfoAt(QPoint(r.left() + 20, r.center().y()));
+        QCOMPARE(left.kind, QLatin1Char('-'));
+        QCOMPARE(left.oldLine, 2);
+        const DiffLineInfo right = diff->lineInfoAt(QPoint(diff->viewport()->width() - 20, r.center().y()));
+        QCOMPARE(right.kind, QLatin1Char('+'));
+        QCOMPARE(right.newLine, 2);
+        shot(&w, QStringLiteral("11-side-by-side"));
+        // Narrower: the rows are laid out again for the new width.
+        w.resize(900, 900);
+        QTRY_COMPARE(diff->horizontalScrollBar()->maximum(), 0);
+        child<QToolButton>(&w, "viewUnified")->click();
+        QTRY_VERIFY(diffText(&w).contains(QStringLiteral("+int x = 3;")));
+        QVERIFY(!Settings::instance().sideBySide);
     }
 
     void changedWords() {

@@ -12,6 +12,7 @@
 #include <QPlainTextEdit>
 
 class QPainter;
+class QTimer;
 
 namespace gitq {
 
@@ -44,6 +45,10 @@ public:
 
     void setMode(Mode m) { m_mode = m; }
     void setWordMode(WordMode m) { m_wordMode = m; }
+    // Side by side: old and new versions in two columns (two-way diffs in Diff mode; the line /
+    // word diff choice doesn't apply). Takes effect with the next appendDiff().
+    void setSideBySide(bool on);
+    bool sideBySide() const { return m_sideBySide; }
     // Whether submodule entries offer to show / hide their files (DiffOptions::SubmoduleLog).
     void setSubmoduleToggles(bool on) { m_submoduleToggles = on; }
 
@@ -73,6 +78,8 @@ public:
     // `offset` (the +/- mark); returns how similar the lines are (0: nothing in common, 1: same).
     static double changedWords(const QString &oldText, const QString &newText, int offset, QList<WordRange> *oldRanges,
                                QList<WordRange> *newRanges);
+    // Pairs (old index, new index) of similar lines in a change, in order.
+    static QList<QPair<int, int>> pairSimilarLines(const QStringList &olds, const QStringList &news);
 
 signals:
     void commitLinkActivated(const gitq::Oid &id);
@@ -97,7 +104,16 @@ private:
     friend class DiffHighlighter;
     friend class HeaderObjects;
     friend class LineGutter;
-    enum Style : quint8 { HeaderStyle, PlainStyle, OldStyle, NewStyle, HunkStyle, FileSepStyle, ErrorStyle, MetaStyle };
+    enum Style : quint8 {
+        HeaderStyle, PlainStyle, OldStyle, NewStyle, HunkStyle, FileSepStyle, ErrorStyle, MetaStyle,
+        SplitStyle,   // a side-by-side row; see m_splitRows
+    };
+    // A side-by-side row: the old side in the first m_splitWidth characters, the new side after
+    // kSplitMiddle more. Kinds: '-' removed, '+' added, ' ' context, null for no line.
+    struct SplitRow {
+        QChar left, right;
+    };
+    static constexpr int kSplitMiddle = 8;   // characters between the sides (new line numbers)
     // A file's header bar: status badge, path, line counts.
     struct FileHeader {
         QString path;
@@ -120,6 +136,20 @@ private:
     QTextCharFormat cardFormat(double scale = 1.0, bool bold = false, bool dim = false) const;
     void insertObject(QTextCursor &cur, int kind, int index, const QString &href = QString());
     void renderFile(const FileDiff &f);
+    void renderSplitFile(const FileDiff &f, const DiffLineInfo &fileMeta);
+    // Side-by-side rows of one old and one new line (either may be absent), wrapped to the
+    // column width.
+    struct SideLine {
+        QChar kind;   // '-', '+', ' ' or null
+        QString text;
+        int line = 0;
+    };
+    void addSplitRows(const QString &path, const SideLine &left, const SideLine &right);
+    int splitColumns() const;   // characters per side for the current width
+    // Re-renders the diff below the header (the column width changed).
+    void rerenderBody();
+    // The x range of the new side, in viewport coordinates.
+    double splitRightX() const;
     // Background of changed words (and of the gutter beside changed lines).
     static QColor wordBg(bool old);
     void renderSubmodule(const SubmoduleChange &s);
@@ -137,6 +167,12 @@ private:
     void onScroll();
 
     Mode m_mode = ShowDiff;
+    bool m_sideBySide = false;
+    int m_splitWidth = 0;                   // characters per side of the rendered split rows (0: none)
+    QHash<int, SplitRow> m_splitRows;       // block number -> side-by-side row
+    DiffResult m_lastResult;                // for re-rendering when the width changes
+    bool m_hasResult = false;
+    QTimer *m_resplitTimer = nullptr;
     WordMode m_wordMode = LineDiff;
     bool m_submoduleToggles = false;
     QList<DiffLineInfo> m_meta;             // per block

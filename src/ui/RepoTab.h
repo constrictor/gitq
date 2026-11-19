@@ -190,6 +190,7 @@ private:
     QTimer *m_findTimer;
     QLineEdit *m_searchEdit;
     QToolButton *m_modeDiff, *m_modeOld, *m_modeNew;
+    QToolButton *m_unified, *m_split;
     QSpinBox *m_contextSpin;
     QToolButton *m_ignoreSpace;
     Choice *m_wordDiff;

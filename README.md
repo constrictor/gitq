@@ -75,9 +75,13 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
   Go, Rust, Swift, PHP, Python, shell, Ruby, Perl, Tcl, CMake, Make, SQL, Lua, JSON, XML/HTML, CSS and
   config files; old and new sides are followed separately through block comments and multi-line
   strings. Preferences can turn it off.
+  Side by side, the old version is on the left and the new on the right, similar lines facing each
+  other, missing lines hatched and long lines wrapped to the column width (laid out again when the
+  pane is resized); the new side's line numbers are between the columns.
   A gutter shows old and new line numbers (the result's for merges; one column in Tree mode); clicking
   it selects the line, right-clicking it opens the line's menu.
-- Diff tool bar in one compact row: Diff / Old / New version, lines of context, ignore space change,
+- Diff tool bar in one compact row: Diff / Old / New version, unified or side-by-side diff, lines of
+  context, ignore space change,
   line / markup words / color words, diff search (finds as you type; arrows or Ctrl-R / Ctrl-S for the
   previous / next match); the ⋯ menu wraps long lines and chooses how submodule changes are shown.
 - File list: Patch mode (scrolls to the file, tracks the file on screen) and Tree mode (file contents).

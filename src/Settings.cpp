@@ -137,6 +137,7 @@ void Settings::load() {
     showNearTags = q.value(QStringLiteral("showNearTags"), showNearTags).toBool();
     wrapDiff = q.value(QStringLiteral("wrapDiff"), wrapDiff).toBool();
     syntaxHighlighting = q.value(QStringLiteral("syntaxHighlighting"), syntaxHighlighting).toBool();
+    sideBySide = q.value(QStringLiteral("sideBySide"), sideBySide).toBool();
     diffContext = q.value(QStringLiteral("diffContext"), diffContext).toInt();
     ignoreSpace = q.value(QStringLiteral("ignoreSpace"), ignoreSpace).toBool();
     wordDiff = q.value(QStringLiteral("wordDiff"), wordDiff).toInt();
@@ -203,6 +204,7 @@ void Settings::save() const {
     q.setValue(QStringLiteral("showNearTags"), showNearTags);
     q.setValue(QStringLiteral("wrapDiff"), wrapDiff);
     q.setValue(QStringLiteral("syntaxHighlighting"), syntaxHighlighting);
+    q.setValue(QStringLiteral("sideBySide"), sideBySide);
     q.setValue(QStringLiteral("diffContext"), diffContext);
     q.setValue(QStringLiteral("ignoreSpace"), ignoreSpace);
     q.setValue(QStringLiteral("wordDiff"), wordDiff);

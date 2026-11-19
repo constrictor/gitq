@@ -304,6 +304,26 @@ void RepoTab::buildUi() {
     mbar->addLayout(modeBox);
     mbar->addSpacing(6);
 
+    // Unified or side-by-side diff.
+    auto *layoutGroup = new QButtonGroup(m_diffPane);
+    auto *layoutBox = new QHBoxLayout;
+    layoutBox->setSpacing(0);
+    auto layoutButton = [&](Glyph g, const QString &tip, const char *name) {
+        auto *b = new QToolButton;
+        b->setIcon(glyphIcon(g));
+        b->setToolTip(tip);
+        b->setObjectName(QLatin1String(name));
+        b->setCheckable(true);
+        layoutGroup->addButton(b);
+        layoutBox->addWidget(b);
+        return b;
+    };
+    m_unified = layoutButton(Glyph::Unified, tr("Unified diff"), "viewUnified");
+    m_split = layoutButton(Glyph::Split, tr("Side by side"), "viewSplit");
+    (Settings::instance().sideBySide ? m_split : m_unified)->setChecked(true);
+    mbar->addLayout(layoutBox);
+    mbar->addSpacing(6);
+
     m_contextSpin = new QSpinBox;
     m_contextSpin->setObjectName(QStringLiteral("contextSpin"));
     m_contextSpin->setRange(0, 1000);
@@ -378,6 +398,14 @@ void RepoTab::buildUi() {
     ll->addLayout(mbar);
     m_diff = new DiffView;
     m_diff->setObjectName(QStringLiteral("diffView"));
+    m_diff->setSideBySide(Settings::instance().sideBySide);
+    wordBtn->setEnabled(!Settings::instance().sideBySide);
+    connect(m_split, &QToolButton::toggled, this, [this, wordBtn](bool on) {
+        Settings::instance().sideBySide = on;
+        m_diff->setSideBySide(on);
+        wordBtn->setEnabled(!on);   // side by side always shows changed words
+        startDiff();
+    });
     ll->addWidget(m_diff, 1);
 
     // --- files pane
