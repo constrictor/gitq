@@ -5,6 +5,7 @@
 #include "model/FileListModel.h"
 #include "ui/Choice.h"
 #include "ui/CommitListView.h"
+#include "ui/CommitPane.h"
 #include "ui/DiffView.h"
 #include "ui/MainWindow.h"
 #include "ui/PrefsDialog.h"
@@ -12,6 +13,9 @@
 #include "ui/ViewDialog.h"
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QPlainTextEdit>
+#include <QPushButton>
 #include <QClipboard>
 #include <QScrollBar>
 #include <QTextBlock>
@@ -57,6 +61,11 @@ class TestMainWindow : public QObject {
         QTRY_VERIFY_WITH_TIMEOUT(model(w)->rowCount() > 0, 10000);
         QTRY_VERIFY_WITH_TIMEOUT(!child<QLineEdit>(w, "shaEdit")->text().isEmpty(), 10000);
         QTest::qWait(200);
+    }
+
+    bool m_selectedIsWorkdir(QWidget *w) {
+        const QModelIndex i = child<QTreeView>(w, "commitList")->currentIndex();
+        return i.isValid() && model(w)->commitAt(i.row())->id.isWorkdir();
     }
 
     QString diffText(QWidget *w) { return child<DiffView>(w, "diffView")->toPlainText(); }
@@ -317,6 +326,110 @@ private slots:
         QVERIFY(diffText(&w).contains(QStringLiteral("+edited in work tree")));
         QVERIFY(diffText(&w).trimmed().startsWith(QStringLiteral("Local uncommitted changes")));
         repo->git({"checkout", "--", "README"});
+    }
+
+    void commitPreparation() {
+        test::TestRepo r;
+        QByteArray text;
+        for (int i = 1; i <= 60; ++i) text += QByteArray::number(i) + '\n';
+        r.commit("Base", {{"f.txt", text}});
+        QByteArray changed = text;
+        changed.replace("\n5\n", "\nfive\n").replace("\n30\n", "\nthirty\n");
+        r.write("f.txt", changed);
+        r.write("new.txt", "brand new\n");
+
+        MainWindow w(r.path(), {});
+        w.resize(1200, 900);
+        w.show();
+        QVERIFY(QTest::qWaitForWindowActive(&w));
+        waitLoaded(&w);
+        QCOMPARE(model(&w)->rowCount(), 2);   // local changes (untracked files count) + Base
+        QVERIFY(model(&w)->commitAt(0)->id.isWorkdir());
+        auto *list = child<QTreeView>(&w, "commitList");
+        list->setCurrentIndex(model(&w)->index(0, 0));
+        QTRY_VERIFY(diffFiles(&w).contains(QStringLiteral("new.txt")));
+        QVERIFY(diffFiles(&w).contains(QStringLiteral("f.txt")));
+        auto *diff = child<DiffView>(&w, "diffView");
+        QCOMPARE(diff->actionSet(), DiffView::WorkdirActions);
+        QVERIFY(diff->hunkActions(QStringLiteral("f.txt")) & DiffView::StageAction);
+        QCOMPARE(diff->fileActions(QStringLiteral("new.txt")), DiffView::StageAction | DiffView::DeleteAction);
+        QCOMPARE(diff->hunkActions(QStringLiteral("new.txt")), 0);   // untracked: whole file only
+        shot(&w, QStringLiteral("20-local-changes"));
+
+        // Click the "Stage hunk" button at the right end of f.txt's first hunk line.
+        diff->scrollToFile(QStringLiteral("f.txt"));
+        QTextBlock hunkLine;
+        for (QTextBlock b = diff->document()->begin(); b.isValid(); b = b.next())
+            if (b.text().startsWith(QStringLiteral("@@ -2,7"))) hunkLine = b;
+        QVERIFY(hunkLine.isValid());
+        const QRect cr = diff->cursorRect(QTextCursor(hunkLine));
+        QTest::mouseClick(diff->viewport(), Qt::LeftButton, {}, QPoint(diff->viewport()->width() - 20, cr.center().y()));
+        QTRY_COMPARE(r.git({"show", ":f.txt"}).count(QStringLiteral("five")), 1);
+        QVERIFY(!r.git({"show", ":f.txt"}).contains(QStringLiteral("thirty")));
+        // The staged changes row appears; the unstaged one stays selected and loses the hunk.
+        QTRY_COMPARE(model(&w)->rowCount(), 3);
+        QTRY_VERIFY(model(&w)->commitAt(model(&w)->rowOf(Oid::workdirId())) && m_selectedIsWorkdir(&w));
+        QTRY_VERIFY(!diffText(&w).contains(QStringLiteral("+five")));
+        QVERIFY(diffText(&w).contains(QStringLiteral("+thirty")));
+
+        // Stage the new file from its header button.
+        QMetaObject::invokeMethod(diff, "fileActionRequested", Q_ARG(QString, QStringLiteral("new.txt")),
+                                  Q_ARG(int, DiffView::StageAction));
+        QTRY_VERIFY(r.git({"status", "--porcelain"}).contains(QStringLiteral("A  new.txt")));
+
+        // The staged row offers Unstage.
+        list->setCurrentIndex(model(&w)->index(model(&w)->rowOf(Oid::indexId()), 0));
+        QTRY_VERIFY(diffFiles(&w).contains(QStringLiteral("new.txt")));
+        QTRY_COMPARE(diff->actionSet(), DiffView::IndexActions);
+        QCOMPARE(diff->fileActions(QStringLiteral("new.txt")), int(DiffView::UnstageAction));
+        shot(&w, QStringLiteral("21-staged-changes"));
+
+        // Writing the message doesn't trigger the window's single-key shortcuts.
+        auto *edit = child<QPlainTextEdit>(&w, "commitMessage");
+        auto *button = child<QPushButton>(&w, "commitButton");
+        QVERIFY(edit->isVisible());
+        QTRY_VERIFY(child<QLabel>(&w, "commitInfo")->text().contains(QStringLiteral("2 files staged")));
+        QVERIFY(!button->isEnabled());   // no message yet
+        edit->setFocus();
+        const QString selectedBefore = child<QLineEdit>(&w, "shaEdit")->text();
+        QTest::keyClicks(edit, QStringLiteral("pnj Add five and new"));
+        QCOMPARE(edit->toPlainText(), QStringLiteral("pnj Add five and new"));
+        QCOMPARE(child<QLineEdit>(&w, "shaEdit")->text(), selectedBefore);
+        QVERIFY(button->isEnabled());
+
+        // The draft survives until the commit.
+        QTRY_VERIFY(QFile::exists(QDir(r.path()).filePath(QStringLiteral(".git/gitq/COMMIT_DRAFT"))));
+        QTest::keyClick(edit, Qt::Key_Return, Qt::ControlModifier);
+        QTRY_COMPARE(r.git({"log", "-1", "--format=%s"}).trimmed(), QStringLiteral("pnj Add five and new"));
+        QTRY_COMPARE(child<QLineEdit>(&w, "shaEdit")->text(), r.rev("HEAD"));   // the new commit is shown
+        QVERIFY(edit->toPlainText().isEmpty());
+        QVERIFY(!QFile::exists(QDir(r.path()).filePath(QStringLiteral(".git/gitq/COMMIT_DRAFT"))));
+        QTRY_COMPARE(model(&w)->rowCount(), 3);   // local changes (thirty) + 2 commits
+        QVERIFY(model(&w)->commitAt(0)->id.isWorkdir());
+
+        // Amend shows HEAD's message for editing.
+        auto *amend = child<QCheckBox>(&w, "amendCheck");
+        amend->setChecked(true);
+        QCOMPARE(edit->toPlainText(), QStringLiteral("pnj Add five and new"));
+        QVERIFY(button->isEnabled());   // amending needs nothing staged
+        edit->setPlainText(QStringLiteral("Add five and new"));
+        button->click();
+        QTRY_VERIFY(!amend->isChecked());   // reset once the commit is done
+        QCOMPARE(r.git({"log", "-1", "--format=%s"}).trimmed(), QStringLiteral("Add five and new"));
+        QCOMPARE(r.git({"rev-list", "--count", "HEAD"}).trimmed(), QStringLiteral("2"));
+        QTRY_COMPARE(child<QLineEdit>(&w, "shaEdit")->text(), r.rev("HEAD"));
+    }
+
+    void commitPaneDocked() {
+        MainWindow w(repo->path(), {});
+        w.resize(1200, 900);
+        w.show();
+        waitLoaded(&w);
+        auto *commitPane = child<ads::CDockWidget>(&w, "commitPane");
+        QVERIFY(commitPane->dockAreaWidget() != child<ads::CDockWidget>(&w, "diffPane")->dockAreaWidget());
+        QVERIFY(commitPane->dockAreaWidget() != child<ads::CDockWidget>(&w, "filesPane")->dockAreaWidget());
+        QVERIFY(child<QPlainTextEdit>(&w, "commitMessage")->isVisible());
+        QVERIFY(child<QLabel>(&w, "commitBranch")->text().contains(QStringLiteral("master")));
     }
 
     void multilineCommitList() {

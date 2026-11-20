@@ -10,6 +10,7 @@
 #include <QHash>
 #include <QMap>
 #include <QPlainTextEdit>
+#include <optional>
 
 class QPainter;
 class QTimer;
@@ -21,6 +22,7 @@ struct DiffLineInfo {
     QChar kind;        // '+', '-', ' ' or null for non-content lines
     int oldLine = 0;   // 1-based, 0 if n/a
     int newLine = 0;
+    int hunk = -1;     // index of the hunk in the file's diff (its "@@" line and body), -1 if none
 };
 
 class DiffView : public QPlainTextEdit {
@@ -28,6 +30,14 @@ class DiffView : public QPlainTextEdit {
 public:
     enum Mode { ShowDiff, ShowOld, ShowNew };
     enum WordMode { LineDiff, MarkupWords, ColorWords };
+
+    // Buttons on file header bars and hunk lines of local changes.
+    enum Action { StageAction = 1, UnstageAction = 2, DiscardAction = 4, DeleteAction = 8 };
+    enum ActionSet {
+        NoActions,
+        WorkdirActions,   // "Local uncommitted changes": stage, discard / delete
+        IndexActions,     // "Local changes checked in to index": unstage
+    };
 
     explicit DiffView(QWidget *parent = nullptr);
 
@@ -51,6 +61,20 @@ public:
     bool sideBySide() const { return m_sideBySide; }
     // Whether submodule entries offer to show / hide their files (DiffOptions::SubmoduleLog).
     void setSubmoduleToggles(bool on) { m_submoduleToggles = on; }
+    // Which buttons the next appendDiff() shows; `hunks`: also on each hunk (when the diff shown is
+    // the plain one git applies, i.e. not ignoring white space and not an old / new version).
+    void setActions(ActionSet set, bool hunks) {
+        m_actionSet = set;
+        m_hunkActionsOn = hunks;
+    }
+    ActionSet actionSet() const { return m_actionSet; }
+    // The buttons (Action flags) the file at `path` of the diff shown has on its header / its hunks.
+    int fileActions(const QString &path) const;
+    int hunkActions(const QString &path) const;
+    // Text of an action's button ("Stage", "Stage hunk", ...).
+    static QString actionLabel(int action, bool hunk);
+    // The diff shown (the last appendDiff()).
+    const DiffResult &result() const { return m_lastResult; }
 
     void scrollToFile(const QString &path);
     void scrollToTop();
@@ -90,11 +114,15 @@ signals:
     void fileAtTopChanged(const QString &path);
     void diffContextMenu(const gitq::DiffLineInfo &info, const QPoint &globalPos);
     void statusMessage(const QString &text, int timeout);
+    // A button of a file header bar / of a hunk was clicked (Action).
+    void fileActionRequested(const QString &path, int action);
+    void hunkActionRequested(const QString &path, int hunk, int action);
 
 protected:
     void mouseMoveEvent(QMouseEvent *e) override;
     void mouseReleaseEvent(QMouseEvent *e) override;
     void mousePressEvent(QMouseEvent *e) override;
+    void leaveEvent(QEvent *e) override;
     void contextMenuEvent(QContextMenuEvent *e) override;
     void paintEvent(QPaintEvent *e) override;
     void resizeEvent(QResizeEvent *e) override;
@@ -123,7 +151,23 @@ private:
         int added = 0, removed = 0;
         bool binary = false;
         bool submodule = false;
+        int actions = 0;    // buttons (Action flags)
     };
+    // A clickable button painted over the text.
+    struct Button {
+        QRectF rect;
+        QString path;
+        int hunk = -1;      // -1: a file button
+        int action = 0;
+    };
+    // The actions offered for a file / for its hunks with the current action set.
+    int fileActionsFor(const FileDiff &f) const;
+    int hunkActionsFor(const FileDiff &f) const;
+    QList<Button> headerButtons(const QRectF &r, const FileHeader &h) const;
+    QList<Button> hunkButtons(const QRectF &r, const QString &path, int hunk, int actions) const;
+    QList<Button> visibleButtons() const;
+    std::optional<Button> buttonAt(const QPointF &pos) const;
+    void paintButton(QPainter *p, const Button &b, const QColor &base) const;
     // Header lines are inserted directly with formats (they contain links).
     void appendLine(const QString &text, const QTextCharFormat &fmt, const DiffLineInfo &meta = {},
                     const QTextBlockFormat &bfmt = QTextBlockFormat());
@@ -178,6 +222,13 @@ private:
     QTimer *m_resplitTimer = nullptr;
     WordMode m_wordMode = LineDiff;
     bool m_submoduleToggles = false;
+    ActionSet m_actionSet = NoActions;
+    bool m_hunkActionsOn = false;
+    int m_curHunk = -1;                     // while rendering: hunk the body lines belong to
+    int m_curHunkActions = 0;               // while rendering: buttons of the current file's hunks
+    QHash<int, int> m_hunkActions;          // block number of a hunk line -> its buttons
+    std::optional<Button> m_pressedButton;
+    QRectF m_hoverButton;
     QList<DiffLineInfo> m_meta;             // per block
     QList<quint8> m_style;                  // per block
     QList<quint8> m_markLen;                // per block: length of the +/- marks at its start

@@ -85,11 +85,11 @@ private:
     QTabBar *m_tabBar;
 
     // Bump when the panes change so an incompatible saved layout falls back to the default.
-    static constexpr int DockStateVersion = 1;
+    static constexpr int DockStateVersion = 2;   // 2: Commit pane
     ads::CDockManager *m_dockManager;
-    ads::CDockWidget *m_commitsPane, *m_diffPane, *m_filesPane;
+    ads::CDockWidget *m_commitsPane, *m_diffPane, *m_filesPane, *m_commitPane;
     // Each pane shows the current tab's widget of a stack holding every tab's.
-    QStackedWidget *m_commitsStack, *m_diffStack, *m_filesStack;
+    QStackedWidget *m_commitsStack, *m_diffStack, *m_filesStack, *m_commitStack;
     QByteArray m_defaultDockState;
 
     QMenu *m_viewMenu, *m_recentMenu;

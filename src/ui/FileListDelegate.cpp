@@ -5,6 +5,7 @@
 #include "ui/Glyphs.h"
 
 #include <QApplication>
+#include <QMouseEvent>
 #include <QPainter>
 
 namespace gitq {
@@ -13,6 +14,34 @@ QSize FileListDelegate::sizeHint(const QStyleOptionViewItem &opt, const QModelIn
     QSize s = QStyledItemDelegate::sizeHint(opt, idx);
     s.setHeight(qMax(s.height(), opt.fontMetrics.height() + 6));
     return s;
+}
+
+QString FileListDelegate::buttonText() const { return m_action == StageRow ? tr("Stage") : tr("Unstage"); }
+
+QRectF FileListDelegate::buttonRect(const QStyleOptionViewItem &opt, const QModelIndex &idx) const {
+    if (m_action == NoRowAction || idx.data(FileListModel::PathRole).toString().isEmpty() ||
+        idx.data(FileListModel::IsFolderRole).toBool())
+        return {};
+    QFont small = opt.font;
+    if (small.pointSizeF() > 0) small.setPointSizeF(small.pointSizeF() * 0.85);
+    const QFontMetricsF sm(small);
+    const QRectF r = QRectF(opt.rect).adjusted(4, 0, -6, 0);
+    const double w = sm.horizontalAdvance(buttonText()) + 14, h = qMin(r.height() - 4, sm.height() + 4);
+    return QRectF(r.right() - w, r.center().y() + 0.5 - h / 2, w, h);
+}
+
+bool FileListDelegate::editorEvent(QEvent *e, QAbstractItemModel *model, const QStyleOptionViewItem &opt,
+                                   const QModelIndex &idx) {
+    if (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::MouseButtonRelease ||
+        e->type() == QEvent::MouseButtonDblClick) {
+        auto *me = static_cast<QMouseEvent *>(e);
+        const QRectF b = buttonRect(opt, idx);
+        if (me->button() == Qt::LeftButton && !b.isNull() && b.contains(me->position())) {
+            if (e->type() == QEvent::MouseButtonRelease) emit rowActionClicked(idx.data(FileListModel::PathRole).toString());
+            return true;   // the click doesn't select the row
+        }
+    }
+    return QStyledItemDelegate::editorEvent(e, model, opt, idx);
 }
 
 void FileListDelegate::paint(QPainter *p, const QStyleOptionViewItem &optIn, const QModelIndex &idx) const {
@@ -71,6 +100,25 @@ void FileListDelegate::paint(QPainter *p, const QStyleOptionViewItem &optIn, con
         drawStatusBadge(p, QRectF(x, cy - s / 2, s, s), status.at(0));
         x += s + 6;
         p->setFont(opt.font);
+    }
+
+    // The row button, on the row under the mouse.
+    if (opt.state & QStyle::State_MouseOver) {
+        const QRectF b = buttonRect(opt, idx);
+        if (!b.isNull()) {
+            QFont small = opt.font;
+            if (small.pointSizeF() > 0) small.setPointSizeF(small.pointSizeF() * 0.85);
+            p->setRenderHint(QPainter::Antialiasing, true);
+            p->setPen(Settings::mix(bg, fg, 0.3));
+            p->setBrush(Settings::mix(bg, fg, 0.08));
+            const QRectF br = b.adjusted(0.5, 0.5, -0.5, -0.5);
+            p->drawRoundedRect(br, br.height() * 0.3, br.height() * 0.3);
+            p->setFont(small);
+            p->setPen(fg);
+            p->drawText(b, Qt::AlignCenter, buttonText());
+            p->setFont(opt.font);
+            right = b.left() - 8;
+        }
     }
 
     // Line counts on the right.

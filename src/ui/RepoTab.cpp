@@ -7,6 +7,7 @@
 #include "ui/BlameWindow.h"
 #include "ui/Choice.h"
 #include "ui/CommitListView.h"
+#include "ui/CommitPane.h"
 #include "ui/Dialogs.h"
 #include "ui/FileListDelegate.h"
 #include "ui/Glyphs.h"
@@ -23,6 +24,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
@@ -52,6 +54,8 @@ namespace gitq {
 
 namespace {
 constexpr int kFindPaths = 5;   // "touching paths" in the find bar's choice
+
+QString fileCount(int n) { return n == 1 ? RepoTab::tr("1 file") : RepoTab::tr("%1 files").arg(n); }
 }
 
 RepoTab::RepoTab(Repository repo, const QStringList &args, const QString &prefix, QWidget *parent)
@@ -114,6 +118,29 @@ RepoTab::RepoTab(Repository repo, const QStringList &args, const QString &prefix
         if (n.id == m_selected && !m_rangeDiff) m_diff->showNearby(n, Settings::instance().maxRefs);
     });
 
+    // Local changes: re-read them when git changes the repository (index, HEAD, refs written by the
+    // command line or another tool), shortly after the changes stop.
+    connect(&m_localWatcher, &QFutureWatcher<LocalState>::finished, this, &RepoTab::onLocalStateReady);
+    m_refreshTimer = new QTimer(this);
+    m_refreshTimer->setSingleShot(true);
+    m_refreshTimer->setInterval(300);
+    connect(m_refreshTimer, &QTimer::timeout, this, &RepoTab::refreshLocalChanges);
+    if (!m_repo.isBare()) {
+        m_gitWatcher = new QFileSystemWatcher(this);
+        const QString gitDir = QDir(m_repoPath).absolutePath();
+        m_gitWatcher->addPaths({gitDir, QDir(gitDir).filePath(QStringLiteral("index")), QDir(gitDir).filePath(QStringLiteral("HEAD"))});
+        auto changed = [this, gitDir] {
+            // Files replaced by renaming (index.lock -> index) drop out of the watch: watch them again.
+            for (const QString &f : {QStringLiteral("index"), QStringLiteral("HEAD")}) {
+                const QString path = QDir(gitDir).filePath(f);
+                if (!m_gitWatcher->files().contains(path) && QFile::exists(path)) m_gitWatcher->addPath(path);
+            }
+            if (m_activated) m_refreshTimer->start();
+        };
+        connect(m_gitWatcher, &QFileSystemWatcher::directoryChanged, this, changed);
+        connect(m_gitWatcher, &QFileSystemWatcher::fileChanged, this, changed);
+    }
+
     if (!err.isEmpty()) {
         // Shown once the tab is in a window.
         QTimer::singleShot(0, this, [this, err] { emit statusMessage(err, 10000); });
@@ -126,14 +153,18 @@ RepoTab::~RepoTab() {
     if (m_nearbyCancel) m_nearbyCancel->store(true);
     m_diffWatcher.waitForFinished();
     m_nearbyWatcher.waitForFinished();
+    m_localWatcher.waitForFinished();
     delete m_diffPane;
     delete m_filesPane;
+    delete m_commitPane;
 }
 
 QString RepoTab::displayPath() const {
     QString p = m_repo.workdir().isEmpty() ? m_repoPath : m_repo.workdir();
     return QDir::cleanPath(QFileInfo(p).absoluteFilePath());
 }
+
+QWidget *RepoTab::commitPane() const { return m_commitPane; }
 
 QString RepoTab::title() const { return QFileInfo(displayPath()).fileName(); }
 
@@ -432,6 +463,19 @@ void RepoTab::buildUi() {
     m_treeMode = fileModeButton(tr("Tree"), tr("All files of the commit"), "treeMode");
     m_patchMode->setChecked(true);
     rbar->addStretch(1);
+    // Local changes rows: stage / unstage every file listed.
+    auto barButton = [&](const QString &text, const QString &tip, const char *name) {
+        auto *b = new QToolButton;
+        b->setText(text);
+        b->setToolTip(tip);
+        b->setObjectName(QLatin1String(name));
+        b->setAutoRaise(true);
+        b->hide();
+        rbar->addWidget(b);
+        return b;
+    };
+    m_stageAllBtn = barButton(tr("Stage all"), tr("Add the changes of all files listed to the index"), "stageAll");
+    m_unstageAllBtn = barButton(tr("Unstage all"), tr("Take all files listed out of the index"), "unstageAll");
     auto *group = new QToolButton;
     group->setObjectName(QStringLiteral("groupFiles"));
     group->setIcon(glyphIcon(Glyph::Folder));
@@ -449,12 +493,18 @@ void RepoTab::buildUi() {
     m_files = new QListView;
     m_files->setObjectName(QStringLiteral("fileList"));
     m_files->setModel(m_fileModel);
-    m_files->setItemDelegate(new FileListDelegate(m_files));
+    m_fileDelegate = new FileListDelegate(m_files);
+    m_files->setItemDelegate(m_fileDelegate);
+    m_files->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_files->setMouseTracking(true);
     m_files->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_files->setContextMenuPolicy(Qt::CustomContextMenu);
     m_files->setUniformItemSizes(true);
     rl->addWidget(m_files, 1);
+
+    // --- commit pane
+    m_commitPane = new CommitPane(&m_repo);
+    m_commitPane->setEnabled(!m_repo.isBare());
 
     // --- wiring
     connect(m_list->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
@@ -519,6 +569,17 @@ void RepoTab::buildUi() {
         }
     });
     connect(m_diff, &DiffView::diffContextMenu, this, &RepoTab::diffMenu);
+    connect(m_diff, &DiffView::fileActionRequested, this,
+            [this](const QString &path, int action) { fileAction({path}, action); });
+    connect(m_diff, &DiffView::hunkActionRequested, this, &RepoTab::hunkAction);
+    connect(m_fileDelegate, &FileListDelegate::rowActionClicked, this, [this](const QString &path) {
+        const int action = localActionSet() == DiffView::IndexActions ? DiffView::UnstageAction : DiffView::StageAction;
+        if (m_diff->fileActions(path) & action) fileAction(selectedFiles(path), action);
+    });
+    connect(m_stageAllBtn, &QToolButton::clicked, this, [this] { fileAction(allLocalFiles(), DiffView::StageAction); });
+    connect(m_unstageAllBtn, &QToolButton::clicked, this, [this] { fileAction(allLocalFiles(), DiffView::UnstageAction); });
+    connect(m_commitPane, &CommitPane::committed, this, &RepoTab::onCommitted);
+    connect(m_commitPane, &CommitPane::statusMessage, this, &RepoTab::statusMessage);
     connect(m_diff, &DiffView::statusMessage, this, &RepoTab::statusMessage);
 }
 
@@ -531,7 +592,9 @@ void RepoTab::buildShortcuts() {
         a->setShortcut(seq);
         a->setShortcutContext(Qt::WindowShortcut);
         connect(a, &QAction::triggered, this, fn);
-        for (QWidget *w : {static_cast<QWidget *>(this), m_diffPane.data(), m_filesPane.data()}) w->addAction(a);
+        for (QWidget *w : {static_cast<QWidget *>(this), m_diffPane.data(), m_filesPane.data(),
+                           static_cast<QWidget *>(m_commitPane.data())})
+            w->addAction(a);
     };
     auto keyNav = [this](const QKeySequence &seq, auto fn) {
         for (QWidget *w : {static_cast<QWidget *>(m_list), static_cast<QWidget *>(m_diff), static_cast<QWidget *>(m_files)}) {
@@ -642,6 +705,8 @@ void RepoTab::startLoad(bool keepSelection) {
     m_rowLabel->setText(tr("Row"));
     m_loadTimer.start();
     m_loader->start(m_repoPath, m_opts);
+    updateCommitPane();
+    refreshLocalChanges();
 }
 
 void RepoTab::onCommitsLoaded(const CommitPtrList &batch) {
@@ -848,6 +913,7 @@ DiffOptions RepoTab::diffOptions() const {
     o.submodules = m_submoduleMode->currentIndex();
     o.expandSubmodules = QStringList(m_expandedSubmodules.cbegin(), m_expandedSubmodules.cend());
     o.expandSubmodules.sort();
+    o.includeUntracked = Settings::instance().showUntracked;
     return o;
 }
 
@@ -876,6 +942,18 @@ void RepoTab::startDiff() {
 void RepoTab::onDiffReady() {
     DiffJob job = m_diffWatcher.result();
     if (job.seq != m_diffSeq) return;
+    if (job.seq == m_quietDiffSeq && !m_treeMode->isChecked()) {
+        // A refresh of the local changes shown: nothing to do if they are the same.
+        auto same = [](const DiffResult &a, const DiffResult &b) {
+            if (a.files.size() != b.files.size() || a.error != b.error) return false;
+            for (int i = 0; i < a.files.size(); ++i)
+                if (a.files[i].path() != b.files[i].path() || a.files[i].status != b.files[i].status ||
+                    a.files[i].lines != b.files[i].lines)
+                    return false;
+            return true;
+        };
+        if (same(job.diff, m_lastDiff)) return;
+    }
     m_lastDiff = job.diff;
     // Re-render the header + diff (the header may already be present for this commit).
     if (!m_rangeDiff) {
@@ -901,6 +979,8 @@ void RepoTab::onDiffReady() {
     m_diff->setSubmoduleToggles(m_submoduleMode->currentIndex() == DiffOptions::SubmoduleLog);
     m_diff->setMode(m_modeOld->isChecked() ? DiffView::ShowOld : m_modeNew->isChecked() ? DiffView::ShowNew : DiffView::ShowDiff);
     m_diff->setWordMode(DiffView::WordMode(m_wordDiff->currentIndex()));
+    // Hunk buttons only on the diff git can apply: whitespace changes not ignored, changes shown.
+    m_diff->setActions(localActionSet(), !m_ignoreSpace->isChecked() && m_modeDiff->isChecked());
     m_diff->appendDiff(job.diff);
     m_diff->setFindSpec(m_findSpec);
     if (m_pendingLine && !m_rangeDiff && m_pendingLine->commit == m_selected) {
@@ -914,6 +994,7 @@ void RepoTab::onDiffReady() {
     } else {
         fillFileList();
     }
+    updateLocalUi();
 }
 
 void RepoTab::fillFileList() {
@@ -928,7 +1009,22 @@ void RepoTab::fillFileList() {
         if (f.submodule < 0) f.countChanges(&e.added, &e.removed);
         entries.append(e);
     }
+    // Keep the selected files selected (the list is refilled when the local changes are refreshed).
+    QSet<QString> selected;
+    for (const QModelIndex &i : m_files->selectionModel()->selectedIndexes()) selected.insert(i.data(FileListModel::PathRole).toString());
+    const QString current = m_files->currentIndex().data(FileListModel::PathRole).toString();
     m_fileModel->setEntries(entries, true);
+    if (!selected.isEmpty() || !current.isEmpty()) {
+        QItemSelection sel;
+        for (int r = 0; r < m_fileModel->rowCount(); ++r) {
+            const QString p = m_fileModel->index(r).data(FileListModel::PathRole).toString();
+            if (!p.isEmpty() && selected.contains(p)) sel.select(m_fileModel->index(r), m_fileModel->index(r));
+        }
+        QSignalBlocker b(m_files->selectionModel());
+        const int cur = current.isEmpty() ? -1 : m_fileModel->rowOfPath(current);
+        if (cur >= 0) m_files->selectionModel()->setCurrentIndex(m_fileModel->index(cur), QItemSelectionModel::NoUpdate);
+        m_files->selectionModel()->select(sel, QItemSelectionModel::ClearAndSelect);
+    }
     QSet<QString> hl;
     if (m_findSpec.type == FindSpec::TouchingPaths && !m_findSpec.text.isEmpty()) {
         PathFilter pf(m_repo.raw(), m_findSpec.text.split(QLatin1Char(' '), Qt::SkipEmptyParts));
@@ -1180,8 +1276,42 @@ void RepoTab::refMenu(int, const RefInfo &ref, const QPoint &pos) {
 void RepoTab::fileMenu(const QPoint &pos) {
     QModelIndex idx = m_files->indexAt(pos);
     QString path = idx.data(FileListModel::PathRole).toString();
+    if (path.isEmpty() && idx.data(FileListModel::IsFolderRole).toBool()) path = idx.data(FileListModel::NameRole).toString();
     if (path.isEmpty()) return;
     QMenu menu(this);
+    // Local changes: stage / unstage / discard the selected files.
+    const DiffView::ActionSet set = localActionSet();
+    if (set != DiffView::NoActions) {
+        const QStringList files = idx.data(FileListModel::IsFolderRole).toBool()
+                                      ? selectedFiles(QString())
+                                      : selectedFiles(path);
+        int actions = 0;
+        int untracked = 0;
+        for (const QString &f : files) {
+            actions |= m_diff->fileActions(f);
+            if (m_diff->fileActions(f) & DiffView::DeleteAction) ++untracked;
+        }
+        const int n = int(files.size());
+        auto add = [&](int action, const QString &text) {
+            QAction *a = menu.addAction(text, this, [this, files, action] { fileAction(files, action); });
+            a->setEnabled(actions & action);
+        };
+        if (set == DiffView::WorkdirActions) {
+            add(DiffView::StageAction, n == 1 ? tr("Stage") : tr("Stage %n files", nullptr, n));
+            if (untracked < n) add(DiffView::DiscardAction, n == 1 ? tr("Discard changes") : tr("Discard changes to %1").arg(fileCount(n - untracked)));
+            if (untracked > 0) add(DiffView::DeleteAction, untracked == 1 ? tr("Delete untracked file") : tr("Delete %n untracked files", nullptr, untracked));
+        } else {
+            add(DiffView::UnstageAction, n == 1 ? tr("Unstage") : tr("Unstage %n files", nullptr, n));
+        }
+        if (canUndoDiscard()) menu.addAction(tr("Undo last discard"), this, &RepoTab::undoDiscard);
+        menu.addSeparator();
+        if (idx.data(FileListModel::IsFolderRole).toBool()) {
+            menu.exec(m_files->viewport()->mapToGlobal(pos));
+            return;
+        }
+    } else if (idx.data(FileListModel::IsFolderRole).toBool()) {
+        return;
+    }
     auto highlight = [this, path](bool only) {
         QString text = only ? path : (m_findWhat->currentIndex() == kFindPaths && !m_findEdit->text().isEmpty()
                                           ? m_findEdit->text() + QLatin1Char(' ') + path
@@ -1215,10 +1345,287 @@ void RepoTab::diffMenu(const DiffLineInfo &info, const QPoint &pos) {
     a->setEnabled(line);
     if (!info.path.isEmpty() && canOpenSubmodule(info.path))
         menu.addAction(tr("Open submodule in new tab"), this, [this, info] { openSubmodule(info.path, Oid()); });
+    // Local changes: the hunk under the mouse and its file.
+    if (localActionSet() != DiffView::NoActions && !info.path.isEmpty()) {
+        const int hunks = info.hunk >= 0 ? m_diff->hunkActions(info.path) : 0;
+        const int files = m_diff->fileActions(info.path);
+        if (hunks || files) menu.addSeparator();
+        for (int action : {int(DiffView::StageAction), int(DiffView::UnstageAction), int(DiffView::DiscardAction)})
+            if (hunks & action)
+                menu.addAction(DiffView::actionLabel(action, true), this,
+                               [this, info, action] { hunkAction(info.path, info.hunk, action); });
+        for (int action : {int(DiffView::StageAction), int(DiffView::UnstageAction), int(DiffView::DiscardAction),
+                           int(DiffView::DeleteAction)})
+            if (files & action) {
+                const QString text = action == DiffView::StageAction     ? tr("Stage file")
+                                     : action == DiffView::UnstageAction ? tr("Unstage file")
+                                     : action == DiffView::DiscardAction ? tr("Discard file changes")
+                                                                         : tr("Delete untracked file");
+                menu.addAction(text, this, [this, info, action] { fileAction({info.path}, action); });
+            }
+    }
+    if (canUndoDiscard() && localActionSet() == DiffView::WorkdirActions)
+        menu.addAction(tr("Undo last discard"), this, &RepoTab::undoDiscard);
     menu.addSeparator();
     menu.addAction(tr("Copy"), m_diff, &QPlainTextEdit::copy);
     menu.addAction(tr("Select all"), m_diff, &QPlainTextEdit::selectAll);
     menu.exec(pos);
+}
+
+// ---------------------------------------------------------------------------
+// Commit preparation
+
+DiffView::ActionSet RepoTab::localActionSet() const {
+    if (m_rangeDiff || !m_hasSelection || m_repo.isBare()) return DiffView::NoActions;
+    if (m_selected.isWorkdir()) return DiffView::WorkdirActions;
+    if (m_selected.isIndex()) return DiffView::IndexActions;
+    return DiffView::NoActions;
+}
+
+void RepoTab::updateLocalUi() {
+    const DiffView::ActionSet set = m_treeMode->isChecked() ? DiffView::NoActions : localActionSet();
+    const bool any = !allLocalFiles().isEmpty();
+    m_stageAllBtn->setVisible(set == DiffView::WorkdirActions && any);
+    m_unstageAllBtn->setVisible(set == DiffView::IndexActions && any);
+    m_fileDelegate->setRowAction(set == DiffView::WorkdirActions ? FileListDelegate::StageRow
+                                 : set == DiffView::IndexActions ? FileListDelegate::UnstageRow
+                                                                 : FileListDelegate::NoRowAction);
+    m_files->viewport()->update();
+}
+
+void RepoTab::updateCommitPane() {
+    if (!m_commitPane) return;
+    bool published = false;
+    for (const RefInfo &r : m_refs.refs)
+        if (r.kind == RefInfo::LocalBranch && r.name == m_refs.headBranch && !r.upstream.isEmpty())
+            published = r.ahead == 0;   // HEAD is on (or behind) its upstream
+    m_commitPane->setHead(m_refs.headBranch, m_refs.head.isNull(), published);
+}
+
+void RepoTab::refreshLocalChanges() {
+    if (!m_activated || m_repo.isBare()) return;
+    if (m_localWatcher.isRunning()) {
+        m_localPending = true;
+        return;
+    }
+    const QString path = m_repoPath;
+    const bool untracked = Settings::instance().showUntracked;
+    m_localWatcher.setFuture(QtConcurrent::run([path, untracked] {
+        LocalState st;
+        try {
+            Repository repo = Repository::open(path);
+            repo.localChanges(&st.index, &st.workdir, untracked);
+            st.head = repo.resolveCommit(QStringLiteral("HEAD"));
+            st.staged = Ops::stagedSummary(repo);
+        } catch (const GitError &) {
+        }
+        return st;
+    }));
+}
+
+void RepoTab::onLocalStateReady() {
+    const LocalState st = m_localWatcher.result();
+    if (m_localPending) {
+        m_localPending = false;
+        refreshLocalChanges();
+        return;   // a newer state is on its way
+    }
+    if (m_commitPane) m_commitPane->setStaged(st.staged);
+    if (m_loader->isRunning()) return;   // the load in progress shows the current state
+    if (st.head != m_refs.head) {         // committed, checked out or reset outside gitq
+        startLoad(true);
+        return;
+    }
+    if (!Settings::instance().showLocalChanges || !m_opts.showLocalChanges) return;
+    const bool hasWorkdir = m_model->rowOf(Oid::workdirId()) >= 0, hasIndex = m_model->rowOf(Oid::indexId()) >= 0;
+    // Without the rows, HEAD must be in the view for them to appear (as LogLoader decides).
+    if (!hasWorkdir && !hasIndex && (st.head.isNull() || m_model->rowOf(st.head) < 0)) return;
+    if (hasWorkdir == st.workdir && hasIndex == st.index) {
+        // Same rows: refresh the local changes diff shown.
+        if (m_hasSelection && m_selected.isPseudo() && !m_rangeDiff) {
+            startDiff();
+            m_quietDiffSeq = m_diffSeq;
+        }
+        return;
+    }
+    // A row comes or goes: reload. When the row shown goes away, show the other one.
+    std::optional<Oid> next;
+    if (m_hasSelection && !m_rangeDiff && m_selected.isWorkdir() && !st.workdir)
+        next = st.index ? Oid::indexId() : st.head;
+    else if (m_hasSelection && !m_rangeDiff && m_selected.isIndex() && !st.index)
+        next = st.workdir ? Oid::workdirId() : st.head;
+    startLoad(true);
+    if (next) m_pendingSelect = next;
+}
+
+QStringList RepoTab::selectedFiles(const QString &clicked) const {
+    QStringList out;
+    bool clickedSelected = clicked.isEmpty();
+    const QModelIndexList rows = m_files->selectionModel()->selectedIndexes();
+    for (const QModelIndex &i : rows) {
+        if (i.data(FileListModel::IsFolderRole).toBool()) {
+            // The files listed under the folder row: those directly in the folder.
+            QString folder = i.data(FileListModel::NameRole).toString();
+            if (folder.endsWith(QLatin1Char('/'))) folder.chop(1);
+            for (const FileDiff &f : m_lastDiff.files) {
+                const QString p = f.path();
+                if (f.inSubmodule.isEmpty() && p.left(qMax(0, int(p.lastIndexOf(QLatin1Char('/'))))) == folder &&
+                    !out.contains(p))
+                    out << p;
+            }
+            continue;
+        }
+        const QString p = i.data(FileListModel::PathRole).toString();
+        if (p.isEmpty()) continue;
+        if (p == clicked) clickedSelected = true;
+        if (!out.contains(p)) out << p;
+    }
+    if (!clickedSelected) return {clicked};
+    return out;
+}
+
+QStringList RepoTab::withOldPaths(const QStringList &paths) const {
+    QStringList out = paths;
+    for (const FileDiff &f : m_lastDiff.files)
+        if (paths.contains(f.path()) && !f.oldPath.isEmpty() && f.oldPath != f.path() && !out.contains(f.oldPath))
+            out << f.oldPath;
+    return out;
+}
+
+QStringList RepoTab::allLocalFiles() const {
+    QStringList out;
+    if (localActionSet() == DiffView::NoActions) return out;
+    for (const FileDiff &f : m_lastDiff.files)
+        if (f.inSubmodule.isEmpty()) out << f.path();
+    return out;
+}
+
+void RepoTab::fileAction(const QStringList &pathsIn, int action) {
+    // Only files that offer the action (e.g. not files inside submodules).
+    QStringList paths;
+    for (const QString &p : pathsIn)
+        if (m_diff->fileActions(p) & action) paths << p;
+    if (paths.isEmpty()) return;
+    auto listing = [](const QStringList &files) {
+        QStringList shown = files.mid(0, 10);
+        if (files.size() > 10) shown << tr("… and %n more", nullptr, int(files.size() - 10));
+        return shown.join(QLatin1Char('\n'));
+    };
+    QList<DiscardBackup> backups;
+    OpResult r;
+    QString what;
+    switch (action) {
+    case DiffView::StageAction:
+        what = tr("Stage");
+        r = Ops::stageFiles(m_repo, withOldPaths(paths));
+        if (r.ok) r.message = tr("Staged %1").arg(fileCount(int(paths.size())));
+        break;
+    case DiffView::UnstageAction:
+        what = tr("Unstage");
+        r = Ops::unstageFiles(m_repo, withOldPaths(paths));
+        if (r.ok) r.message = tr("Unstaged %1").arg(fileCount(int(paths.size())));
+        break;
+    case DiffView::DiscardAction: {
+        what = tr("Discard");
+        const auto answer = QMessageBox::question(
+            this, tr("Discard changes"),
+            tr("Discard the changes to these files? They go back to their staged version.\n\n%1\n\n"
+               "A copy is kept: Edit ▸ Undo last discard brings the changes back.")
+                .arg(listing(paths)),
+            QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel);
+        if (answer != QMessageBox::Discard) return;
+        r = Ops::discardFiles(m_repo, paths, &backups);
+        if (r.ok) r.message = tr("Discarded the changes to %1").arg(fileCount(int(paths.size())));
+        break;
+    }
+    case DiffView::DeleteAction: {
+        what = tr("Delete");
+        const auto answer = QMessageBox::question(
+            this, tr("Delete untracked files"),
+            tr("Delete these untracked files?\n\n%1\n\nA copy is kept: Edit ▸ Undo last discard brings them back.")
+                .arg(listing(paths)),
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+        if (answer != QMessageBox::Yes) return;
+        r = Ops::deleteUntracked(m_repo, paths, &backups);
+        if (r.ok) r.message = tr("Deleted %1").arg(fileCount(int(paths.size())));
+        break;
+    }
+    default:
+        return;
+    }
+    afterLocalOp(r, what, backups);
+}
+
+void RepoTab::hunkAction(const QString &path, int hunk, int action) {
+    if (!(m_diff->hunkActions(path) & action)) return;
+    for (const FileDiff &f : m_diff->result().files) {
+        if (f.path() != path || !f.inSubmodule.isEmpty()) continue;
+        const QList<FileDiff::Hunk> hunks = f.hunks();
+        if (hunk < 0 || hunk >= hunks.size()) return;
+        HunkRef ref;
+        ref.path = path;
+        ref.context = diffOptions().context;
+        ref.header = f.lines[hunks[hunk].start];
+        ref.body = f.lines.mid(hunks[hunk].start + 1, hunks[hunk].end - hunks[hunk].start - 1);
+        const Ops::HunkAction op = action == DiffView::StageAction     ? Ops::StageHunk
+                                   : action == DiffView::UnstageAction ? Ops::UnstageHunk
+                                                                       : Ops::DiscardHunk;
+        QList<DiscardBackup> backups;
+        OpResult r = Ops::applyHunk(m_repo, ref, op, &backups);
+        if (r.ok) r.message = op == Ops::StageHunk     ? tr("Staged a hunk of %1").arg(path)
+                              : op == Ops::UnstageHunk ? tr("Unstaged a hunk of %1").arg(path)
+                                                       : tr("Discarded a hunk of %1").arg(path);
+        afterLocalOp(r, DiffView::actionLabel(action, true), backups);
+        return;
+    }
+}
+
+void RepoTab::afterLocalOp(const OpResult &r, const QString &what, const QList<DiscardBackup> &backups) {
+    if (!backups.isEmpty()) {
+        m_discards.append(backups);
+        while (m_discards.size() > 50) m_discards.removeFirst();
+    }
+    if (!r.ok) QMessageBox::warning(this, tr("%1 failed").arg(what), r.message);
+    else if (!r.message.isEmpty()) emit statusMessage(r.message, 5000);
+    m_refreshTimer->stop();
+    refreshLocalChanges();
+}
+
+void RepoTab::undoDiscard() {
+    if (m_discards.isEmpty()) return;
+    const QList<DiscardBackup> last = m_discards.last();
+    QStringList files;
+    for (const DiscardBackup &b : last) files << b.path;
+    const auto answer = QMessageBox::question(
+        this, tr("Undo discard"),
+        tr("Bring back the discarded content of these files? It replaces what they hold now.\n\n%1")
+            .arg(files.mid(0, 10).join(QLatin1Char('\n'))),
+        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Yes);
+    if (answer != QMessageBox::Yes) return;
+    m_discards.removeLast();
+    OpResult r;
+    for (const DiscardBackup &b : last) {
+        OpResult one = Ops::restoreDiscarded(m_repo, b);
+        if (!one.ok) r = one;
+    }
+    if (r.ok) r.message = tr("Restored %1").arg(fileCount(int(last.size())));
+    afterLocalOp(r, tr("Undo discard"), {});
+}
+
+void RepoTab::onCommitted(const OpResult &r) {
+    if (!r.ok) {
+        emit statusMessage(QString(), 0);
+        QMessageBox box(QMessageBox::Warning, tr("Commit failed"),
+                        tr("git commit did not succeed. Its output (hooks included) follows."), QMessageBox::Ok, this);
+        box.setDetailedText(r.message);
+        box.setInformativeText(r.message.section(QLatin1Char('\n'), 0, 2));
+        box.exec();
+        refreshLocalChanges();
+        return;
+    }
+    emit statusMessage(r.message, 5000);
+    startLoad(false);
+    if (!r.newCommit.isNull()) m_pendingSelect = r.newCommit;
 }
 
 // ---------------------------------------------------------------------------
@@ -1601,6 +2008,7 @@ void RepoTab::applySettings() {
     const Settings &st = Settings::instance();
     m_list->setFont(st.mainFont);
     m_diff->applyFonts();
+    if (m_commitPane) m_commitPane->applyFonts();
     m_model->setDateFormat(st.dateFormat);
     m_model->setRelativeDates(st.relativeDates);
     m_model->setRefs(m_refs, st.hideRemotes);

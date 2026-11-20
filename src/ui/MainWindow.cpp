@@ -105,15 +105,25 @@ void MainWindow::buildUi() {
         dw->setWidget(stack, ads::CDockWidget::ForceNoScrollArea);
         return dw;
     };
-    // Default layout: commit list on top, diff and file list side by side below.
+    // Default layout: commit list on top, diff and file list side by side below, the commit message
+    // under the file list.
     m_commitsPane = pane(m_commitsStack, tr("Commits"), "commitsPane");
     m_diffPane = pane(m_diffStack, tr("Diff"), "diffPane");
     m_filesPane = pane(m_filesStack, tr("Files"), "filesPane");
+    m_commitPane = pane(m_commitStack, tr("Commit"), "commitPane");
     ads::CDockAreaWidget *topArea = m_dockManager->addDockWidget(ads::TopDockWidgetArea, m_commitsPane);
     ads::CDockAreaWidget *diffArea = m_dockManager->addDockWidget(ads::BottomDockWidgetArea, m_diffPane);
-    m_dockManager->addDockWidget(ads::RightDockWidgetArea, m_filesPane, diffArea);
+    ads::CDockAreaWidget *filesArea = m_dockManager->addDockWidget(ads::RightDockWidgetArea, m_filesPane, diffArea);
+    ads::CDockAreaWidget *commitArea = m_dockManager->addDockWidget(ads::BottomDockWidgetArea, m_commitPane, filesArea);
     m_dockManager->setSplitterSizes(topArea, {2000, 3000});
     m_dockManager->setSplitterSizes(diffArea, {3000, 1000});
+    m_dockManager->setSplitterSizes(commitArea, {3000, 2000});
+
+    // Back from another application (an editor, a terminal): the local changes may have changed.
+    connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+        if (state == Qt::ApplicationActive)
+            if (RepoTab *t = currentTab()) t->refreshLocalChanges();
+    });
 
     connect(m_tabBar, &QTabBar::currentChanged, this, &MainWindow::onCurrentTabChanged);
     connect(m_tabBar, &QTabBar::tabCloseRequested, this, &MainWindow::closeTab);
@@ -151,6 +161,15 @@ void MainWindow::buildMenus() {
     file->addAction(tr("&Quit"), QKeySequence(Qt::CTRL | Qt::Key_Q), this, &QWidget::close);
 
     QMenu *edit = menuBar()->addMenu(tr("&Edit"));
+    QAction *undo = edit->addAction(tr("&Undo last discard"), this, [this] {
+        if (RepoTab *t = currentTab()) t->undoDiscard();
+    });
+    undo->setObjectName(QStringLiteral("undoDiscard"));
+    connect(edit, &QMenu::aboutToShow, this, [this, undo] {
+        RepoTab *t = currentTab();
+        undo->setEnabled(t && t->canUndoDiscard());
+    });
+    edit->addSeparator();
     edit->addAction(tr("&Preferences"), this, &MainWindow::doPrefs);
     attachToPanes(file->actions());
     attachToPanes(edit->actions());
@@ -213,7 +232,7 @@ void MainWindow::rebuildViewMenu() {
     a->setCheckable(true);
     a->setChecked(Settings::instance().commitListMultiline);
     m_viewMenu->addSeparator();
-    for (ads::CDockWidget *dw : {m_commitsPane, m_diffPane, m_filesPane}) m_viewMenu->addAction(dw->toggleViewAction());
+    for (ads::CDockWidget *dw : {m_commitsPane, m_diffPane, m_filesPane, m_commitPane}) m_viewMenu->addAction(dw->toggleViewAction());
     m_viewMenu->addAction(tr("&Reset layout"), this, [this] { m_dockManager->restoreState(m_defaultDockState, DockStateVersion); });
     attachToPanes(m_viewMenu->actions());
 }
@@ -241,7 +260,7 @@ void MainWindow::rebuildRecentMenu() {
 void MainWindow::attachToPanes(const QList<QAction *> &actions) {
     for (QAction *a : actions) {
         if (a->shortcut().isEmpty()) continue;
-        for (ads::CDockWidget *dw : {m_commitsPane, m_diffPane, m_filesPane}) dw->addAction(a);
+        for (ads::CDockWidget *dw : {m_commitsPane, m_diffPane, m_filesPane, m_commitPane}) dw->addAction(a);
     }
 }
 
@@ -357,6 +376,7 @@ void MainWindow::addTab(RepoTab *t, int index) {
     m_commitsStack->addWidget(t);
     m_diffStack->addWidget(t->diffPane());
     m_filesStack->addWidget(t->filesPane());
+    m_commitStack->addWidget(t->commitPane());
     connect(t, &RepoTab::statusMessage, this, [this, t](const QString &text, int timeout) {
         if (t == currentTab()) statusBar()->showMessage(text, timeout);
     });
@@ -397,6 +417,7 @@ void MainWindow::onCurrentTabChanged(int index) {
         m_commitsStack->setCurrentWidget(t);
         m_diffStack->setCurrentWidget(t->diffPane());
         m_filesStack->setCurrentWidget(t->filesPane());
+        m_commitStack->setCurrentWidget(t->commitPane());
         setWindowTitle(QStringLiteral("gitq: %1").arg(t->title()));
         // Deferred, so that only the tab that ends up current loads when several are opened at once.
         QTimer::singleShot(0, this, [this] {

@@ -399,6 +399,9 @@ void DiffView::clearAll() {
     m_wordRanges.clear();
     m_pending.clear();
     m_fileStarts.clear();
+    m_hunkActions.clear();
+    m_pressedButton.reset();
+    m_hoverButton = {};
     m_headerEnd = 0;
     m_cardEnd = 0;
     m_avatarText.clear();
@@ -771,6 +774,23 @@ void DiffView::paintEvent(QPaintEvent *e) {
         }
     }
     QPlainTextEdit::paintEvent(e);
+    if (!m_hunkActions.isEmpty()) {
+        // Buttons at the right end of hunk lines, over a patch of the line's background.
+        QPainter p(viewport());
+        const QPointF offset = contentOffset();
+        const QColor hunkBg = Settings::mix(st.bgColor, st.diffHunkColor, Settings::darkTheme() ? 0.12 : 0.06);
+        for (QTextBlock b = firstVisibleBlock(); b.isValid(); b = b.next()) {
+            const QRectF r = blockBoundingGeometry(b).translated(offset);
+            if (r.top() > e->rect().bottom()) break;
+            const int n = b.blockNumber();
+            auto it = m_hunkActions.constFind(n);
+            if (it == m_hunkActions.cend()) continue;
+            const QList<Button> buttons = hunkButtons(r, m_meta[n].path, m_meta[n].hunk, it.value());
+            if (buttons.isEmpty()) continue;
+            p.fillRect(QRectF(buttons.last().rect.left() - 8, r.top(), r.right() - buttons.last().rect.left() + 8, r.height()), hunkBg);
+            for (const Button &bt : buttons) paintButton(&p, bt, hunkBg);
+        }
+    }
     if (m_splitWidth > 0 && !m_splitRows.isEmpty()) {
         // Side by side: the divider and the new side's line numbers between the columns.
         QPainter p(viewport());
@@ -884,8 +904,13 @@ void DiffView::paintFileHeader(QPainter *p, const QRectF &r, const FileHeader &h
         x += s + 8;
     }
 
-    // Right side: line counts and a five-block bar, or "binary".
+    // Right side: buttons, then line counts and a five-block bar, or "binary".
     double right = r.right() - 10;
+    const QList<Button> buttons = headerButtons(r, h);
+    for (const Button &b : buttons) {
+        paintButton(p, b, bg);
+        right = qMin(right, b.rect.left() - 14);
+    }
     p->setFont(font);
     if (h.binary) {
         const QString t = tr("binary");
@@ -948,6 +973,13 @@ void DiffView::paintFileHeader(QPainter *p, const QRectF &r, const FileHeader &h
 }
 
 void DiffView::mousePressEvent(QMouseEvent *e) {
+    if (e->button() == Qt::LeftButton) {
+        if (auto b = buttonAt(e->position())) {
+            m_pressedButton = b;
+            e->accept();
+            return;
+        }
+    }
     // A click on the sticky header goes to the top of its file.
     FileHeader h;
     const QRectF sticky = stickyHeader(&h);
@@ -969,6 +1001,17 @@ bool DiffView::viewportEvent(QEvent *e) {
         }
         if (href.startsWith(QLatin1String("commit:"))) {
             QToolTip::showText(he->globalPos(), href.mid(7), viewport());
+            return true;
+        }
+        if (auto b = buttonAt(he->pos())) {
+            QString tip;
+            switch (b->action) {
+            case StageAction: tip = b->hunk >= 0 ? tr("Add this hunk to the index") : tr("Add the file's changes to the index"); break;
+            case UnstageAction: tip = b->hunk >= 0 ? tr("Take this hunk out of the index") : tr("Take the file's changes out of the index"); break;
+            case DiscardAction: tip = b->hunk >= 0 ? tr("Revert this hunk in the work tree") : tr("Revert the file in the work tree to the index"); break;
+            case DeleteAction: tip = tr("Delete this untracked file"); break;
+            }
+            QToolTip::showText(he->globalPos(), tip, viewport());
             return true;
         }
         QToolTip::hideText();
@@ -1008,6 +1051,7 @@ void DiffView::rerenderBody() {
     m_markLen.resize(m_headerEnd);
     for (auto it = m_wordRanges.begin(); it != m_wordRanges.end();) it = it.key() >= m_headerEnd ? m_wordRanges.erase(it) : std::next(it);
     m_fileStarts.erase(m_fileStarts.lowerBound(m_headerEnd), m_fileStarts.end());
+    for (auto it = m_hunkActions.begin(); it != m_hunkActions.end();) it = it.key() >= m_headerEnd ? m_hunkActions.erase(it) : std::next(it);
     m_splitRows.clear();
     const DiffResult diff = m_lastResult;
     appendDiff(diff);
@@ -1021,9 +1065,11 @@ void DiffView::appendDiff(const DiffResult &diff) {
     m_splitWidth = m_sideBySide && m_mode == ShowDiff ? splitColumns() : 0;
     if (!diff.error.isEmpty()) addBodyLine(diff.error, ErrorStyle, {});
     for (const FileDiff &f : diff.files) {
-        if (f.submodule >= 0 && f.submodule < diff.submodules.size() && diff.submodules[f.submodule].detailed)
+        if (f.submodule >= 0 && f.submodule < diff.submodules.size() && diff.submodules[f.submodule].detailed) {
+            const int start = int(m_meta.size());
             renderSubmodule(diff.submodules[f.submodule]);
-        else
+            if (m_fileStarts.contains(start)) m_fileStarts[start].actions = fileActionsFor(f);
+        } else
             renderFile(f);
     }
     flushBody();
@@ -1042,8 +1088,10 @@ void DiffView::appendDiff(const DiffResult &diff) {
 void DiffView::addBodyLine(const QString &text, quint8 style, const DiffLineInfo &meta, const QList<WordRange> &words,
                            int markLen) {
     if (!words.isEmpty()) m_wordRanges.insert(int(m_meta.size()), words);
+    if (style == HunkStyle && m_curHunkActions) m_hunkActions.insert(int(m_meta.size()), m_curHunkActions);
     m_pending << text;
     m_meta.append(meta);
+    if (m_curHunk >= 0 && m_meta.last().hunk < 0) m_meta.last().hunk = m_curHunk;
     m_style.append(style);
     m_markLen.append(quint8(markLen));
 }
@@ -1160,6 +1208,7 @@ void DiffView::renderSplitFile(const FileDiff &f, const DiffLineInfo &fileMeta) 
         }
         if (line.startsWith(QLatin1String("@@"))) {
             flush();
+            ++m_curHunk;
             auto m = hunkRe().match(line);
             if (m.hasMatch()) {
                 oldNo = m.captured(1).toInt();
@@ -1237,11 +1286,22 @@ void DiffView::renderFile(const FileDiff &f) {
                        : f.path();
     header.status = f.status;
     header.binary = f.binary;
+    header.actions = fileActionsFor(f);
     f.countChanges(&header.added, &header.removed);
     m_fileStarts.insert(int(m_meta.size()), header);
     DiffLineInfo fileMeta;
     fileMeta.path = f.path();
     addBodyLine(header.title, FileSepStyle, fileMeta);
+    // Body lines are tagged with their hunk (counted from 0 at the first "@@").
+    m_curHunk = -1;
+    m_curHunkActions = hunkActionsFor(f);
+    struct EndFile {
+        DiffView *v;
+        ~EndFile() {
+            v->m_curHunk = -1;
+            v->m_curHunkActions = 0;
+        }
+    } endFile{this};
     if (m_splitWidth > 0 && n == 1) {
         renderSplitFile(f, fileMeta);
         return;
@@ -1293,6 +1353,7 @@ void DiffView::renderFile(const FileDiff &f) {
         if (line.startsWith(QLatin1String("@@"))) {
             flushRun();
             flushLines();
+            ++m_curHunk;
             auto m = hunkRe().match(line);
             if (m.hasMatch()) {
                 oldNo = m.captured(1).toInt();
@@ -1660,12 +1721,167 @@ void DiffView::updateMarkers(const QList<int> &searchHits) {
     verticalScrollBar()->update();
 }
 
+// ---- Action buttons ---------------------------------------------------------------------------
+
+int DiffView::fileActionsFor(const FileDiff &f) const {
+    if (m_actionSet == NoActions || !f.inSubmodule.isEmpty() || f.numParents > 1) return 0;
+    if (m_actionSet == IndexActions) return UnstageAction;
+    if (f.submodule >= 0 || f.status == QLatin1Char('U')) return StageAction;
+    if (f.status == QLatin1Char('?')) return StageAction | DeleteAction;
+    return StageAction | DiscardAction;
+}
+
+int DiffView::hunkActionsFor(const FileDiff &f) const {
+    if (!m_hunkActionsOn || m_mode != ShowDiff || !fileActionsFor(f) || f.binary || f.submodule >= 0) return 0;
+    const QChar s = f.status;
+    if (s != QLatin1Char('M') && s != QLatin1Char('A') && s != QLatin1Char('D')) return 0;
+    return m_actionSet == IndexActions ? int(UnstageAction) : StageAction | DiscardAction;
+}
+
+int DiffView::fileActions(const QString &path) const {
+    for (const FileDiff &f : m_lastResult.files)
+        if (f.path() == path && f.inSubmodule.isEmpty()) return fileActionsFor(f);
+    return 0;
+}
+
+int DiffView::hunkActions(const QString &path) const {
+    for (const FileDiff &f : m_lastResult.files)
+        if (f.path() == path && f.inSubmodule.isEmpty()) return hunkActionsFor(f);
+    return 0;
+}
+
+QString DiffView::actionLabel(int action, bool hunk) {
+    switch (action) {
+    case StageAction: return hunk ? tr("Stage hunk") : tr("Stage");
+    case UnstageAction: return hunk ? tr("Unstage hunk") : tr("Unstage");
+    case DiscardAction: return hunk ? tr("Discard hunk") : tr("Discard");
+    case DeleteAction: return tr("Delete");
+    }
+    return {};
+}
+
+namespace {
+
+QFont buttonFont() {
+    QFont f = Settings::instance().uiFont;
+    if (f.pointSizeF() > 0) f.setPointSizeF(f.pointSizeF() * 0.9);
+    else f.setPixelSize(qMax(8, int(f.pixelSize() * 0.9)));
+    return f;
+}
+
+// Buttons laid out from the right edge `right` leftwards, the primary action (stage / unstage) last
+// in the list and rightmost; returned right to left.
+QList<QPair<int, QRectF>> layoutButtons(int actions, bool hunk, double right, double cy, double maxH) {
+    const QFontMetricsF fm(buttonFont());
+    const double h = qMin(maxH, fm.height() + 6);
+    QList<QPair<int, QRectF>> out;
+    for (int a : {int(DiffView::StageAction), int(DiffView::UnstageAction), int(DiffView::DiscardAction),
+                  int(DiffView::DeleteAction)}) {
+        if (!(actions & a)) continue;
+        const QString label = DiffView::actionLabel(a, hunk);
+        const double w = fm.horizontalAdvance(label) + 16;
+        out.append({a, QRectF(right - w, cy - h / 2, w, h)});
+        right -= w + 6;
+    }
+    return out;
+}
+
+} // namespace
+
+QList<DiffView::Button> DiffView::headerButtons(const QRectF &r, const FileHeader &h) const {
+    QList<Button> out;
+    if (!h.actions) return out;
+    for (const auto &[a, rect] : layoutButtons(h.actions, false, r.right() - 10, r.center().y(), r.height() - 8))
+        out.append({rect, h.path, -1, a});
+    return out;
+}
+
+QList<DiffView::Button> DiffView::hunkButtons(const QRectF &r, const QString &path, int hunk, int actions) const {
+    QList<Button> out;
+    if (!actions || hunk < 0) return out;
+    const double right = viewport()->width() - 10;
+    for (const auto &[a, rect] : layoutButtons(actions, true, right, r.center().y(), r.height() - 2))
+        out.append({rect, path, hunk, a});
+    return out;
+}
+
+QList<DiffView::Button> DiffView::visibleButtons() const {
+    QList<Button> out;
+    const QPointF offset = contentOffset();
+    for (QTextBlock b = firstVisibleBlock(); b.isValid(); b = b.next()) {
+        const QRectF r = blockBoundingGeometry(b).translated(offset);
+        if (r.top() > viewport()->height()) break;
+        const int n = b.blockNumber();
+        if (auto fs = m_fileStarts.constFind(n); fs != m_fileStarts.cend())
+            out += headerButtons(QRectF(0, r.top(), viewport()->width(), r.height()), fs.value());
+        if (auto ha = m_hunkActions.constFind(n); ha != m_hunkActions.cend() && n < m_meta.size())
+            out += hunkButtons(r, m_meta[n].path, m_meta[n].hunk, ha.value());
+    }
+    return out;
+}
+
+std::optional<DiffView::Button> DiffView::buttonAt(const QPointF &pos) const {
+    if (m_actionSet == NoActions) return std::nullopt;
+    FileHeader h;
+    const QRectF sticky = stickyHeader(&h);
+    if (!sticky.isNull() && sticky.contains(pos)) {   // the sticky header covers what is under it
+        for (const Button &b : headerButtons(sticky, h))
+            if (b.rect.contains(pos)) return b;
+        return std::nullopt;
+    }
+    for (const Button &b : visibleButtons())
+        if (b.rect.contains(pos)) return b;
+    return std::nullopt;
+}
+
+void DiffView::paintButton(QPainter *p, const Button &b, const QColor &base) const {
+    const Settings &st = Settings::instance();
+    const bool hover = b.rect == m_hoverButton;
+    const bool danger = b.action == DiscardAction || b.action == DeleteAction;
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing, true);
+    p->setPen(Settings::mix(base, st.fgColor, hover ? 0.4 : 0.25));
+    p->setBrush(Settings::mix(base, hover ? (danger ? removedColor() : st.fgColor) : st.bgColor, hover ? 0.18 : 0.6));
+    const QRectF r = b.rect.adjusted(0.5, 0.5, -0.5, -0.5);
+    p->drawRoundedRect(r, r.height() * 0.3, r.height() * 0.3);
+    p->setFont(buttonFont());
+    p->setPen(danger ? removedColor() : st.fgColor);
+    p->drawText(b.rect, Qt::AlignCenter, actionLabel(b.action, b.hunk >= 0));
+    p->restore();
+}
+
 void DiffView::mouseMoveEvent(QMouseEvent *e) {
-    QPlainTextEdit::mouseMoveEvent(e);
-    viewport()->setCursor(anchorAt(e->pos()).isEmpty() ? Qt::IBeamCursor : Qt::PointingHandCursor);
+    if (!m_pressedButton) QPlainTextEdit::mouseMoveEvent(e);
+    const auto b = buttonAt(e->position());
+    const QRectF hover = b ? b->rect : QRectF();
+    if (hover != m_hoverButton) {
+        m_hoverButton = hover;
+        viewport()->update();
+    }
+    viewport()->setCursor(b || !anchorAt(e->pos()).isEmpty() ? Qt::PointingHandCursor : Qt::IBeamCursor);
+}
+
+void DiffView::leaveEvent(QEvent *e) {
+    if (!m_hoverButton.isNull()) {
+        m_hoverButton = {};
+        viewport()->update();
+    }
+    QPlainTextEdit::leaveEvent(e);
 }
 
 void DiffView::mouseReleaseEvent(QMouseEvent *e) {
+    if (m_pressedButton) {
+        const Button pressed = *m_pressedButton;
+        m_pressedButton.reset();
+        e->accept();
+        const auto b = buttonAt(e->position());
+        if (e->button() == Qt::LeftButton && b && b->path == pressed.path && b->hunk == pressed.hunk &&
+            b->action == pressed.action) {
+            if (b->hunk >= 0) emit hunkActionRequested(b->path, b->hunk, b->action);
+            else emit fileActionRequested(b->path, b->action);
+        }
+        return;
+    }
     QPlainTextEdit::mouseReleaseEvent(e);
     if (e->button() != Qt::LeftButton || textCursor().hasSelection()) return;
     QString href = anchorAt(e->pos());

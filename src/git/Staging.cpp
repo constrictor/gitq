@@ -22,11 +22,14 @@ GitRun git(const Repository &repo, const QStringList &args, const QByteArray &in
 
 OpResult failed(const GitRun &r) { return OpResult::fail(r.errorText()); }
 
-QStringList literals(const QStringList &paths) {
-    QStringList out;
-    for (const QString &p : paths) out << GitCli::literal(p);
+// Paths as NUL-separated literal pathspecs for --pathspec-from-file=- (no limit on their number).
+QByteArray pathspecInput(const QStringList &paths) {
+    QByteArray out;
+    for (const QString &p : paths) out += GitCli::literal(p).toUtf8() + '\0';
     return out;
 }
+
+const QStringList kPathspecStdin = {QStringLiteral("--pathspec-from-file=-"), QStringLiteral("--pathspec-file-nul")};
 
 // Rejects paths that could reach outside the work tree.
 bool safePath(const QString &p) {
@@ -123,7 +126,7 @@ QStringList hunkLines(const QByteArray &hunk) {
 
 OpResult stageFiles(const Repository &repo, const QStringList &paths) {
     if (OpResult c = checkPaths(repo, paths); !c.ok) return c;
-    GitRun r = git(repo, QStringList{QStringLiteral("add"), QStringLiteral("-A"), QStringLiteral("--")} + literals(paths));
+    GitRun r = git(repo, QStringList{QStringLiteral("add"), QStringLiteral("-A")} + kPathspecStdin, pathspecInput(paths));
     return r.ok() ? OpResult{} : failed(r);
 }
 
@@ -135,7 +138,7 @@ OpResult unstageFiles(const Repository &repo, const QStringList &paths) {
                 QStringLiteral("--ignore-unmatch")};
     else
         args = {QStringLiteral("restore"), QStringLiteral("--staged")};
-    GitRun r = git(repo, args << QStringLiteral("--") << literals(paths));
+    GitRun r = git(repo, args + kPathspecStdin, pathspecInput(paths));
     return r.ok() ? OpResult{} : failed(r);
 }
 
@@ -146,8 +149,8 @@ OpResult discardFiles(const Repository &repo, const QStringList &paths, QList<Di
     for (const QString &p : paths)
         if (!backUp(repo, p, false, &made, &error)) return OpResult::fail(error);
     if (backups) *backups += made;
-    GitRun r = git(repo, QStringList{QStringLiteral("restore"), QStringLiteral("--worktree"), QStringLiteral("--")} +
-                             literals(paths));
+    GitRun r = git(repo, QStringList{QStringLiteral("restore"), QStringLiteral("--worktree")} + kPathspecStdin,
+                   pathspecInput(paths));
     return r.ok() ? OpResult{} : failed(r);
 }
 

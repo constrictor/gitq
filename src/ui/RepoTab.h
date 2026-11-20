@@ -10,6 +10,7 @@
 #include "git/NearbyRefs.h"
 #include "git/Repository.h"
 #include "git/Search.h"
+#include "git/Staging.h"
 #include "ui/DiffView.h"
 
 #include <QElapsedTimer>
@@ -23,6 +24,7 @@
 
 class QAction;
 class QCheckBox;
+class QFileSystemWatcher;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -36,6 +38,8 @@ class QToolButton;
 namespace gitq {
 
 class Choice;
+class CommitPane;
+class FileListDelegate;
 class CommitListView;
 class CommitModel;
 class FileListModel;
@@ -50,6 +54,7 @@ public:
 
     QWidget *diffPane() const { return m_diffPane; }
     QWidget *filesPane() const { return m_filesPane; }
+    QWidget *commitPane() const;
 
     QString repoPath() const { return m_repoPath; }   // .git directory: identifies the repository
     QString displayPath() const;                      // work tree (or .git directory if bare)
@@ -79,6 +84,14 @@ public:
     void editView();
     void deleteView();
 
+    // Re-reads the local changes (index, work tree, HEAD) and updates the local changes rows, their
+    // diff and the Commit pane if they changed. Called when the git directory changes, when the
+    // window is activated and after staging operations.
+    void refreshLocalChanges();
+    // Restores the files of the last discard / delete.
+    bool canUndoDiscard() const { return !m_discards.isEmpty(); }
+    void undoDiscard();
+
     // Settings changed (preferences, font size, theme): re-apply them and redisplay.
     void applySettings();
     void settingsChanged(bool reload);
@@ -96,6 +109,11 @@ private:
         DiffResult diff;
         QStringList tree;
         quint64 seq = 0;
+    };
+    struct LocalState {
+        bool index = false, workdir = false;   // local changes rows that should exist
+        Oid head;
+        StagedSummary staged;
     };
 
     // construction
@@ -160,6 +178,23 @@ private:
     void showLineOrigin(const DiffLineInfo &info);
     void reportOp(const OpResult &r, const QString &what);
 
+    // commit preparation
+    // Which local changes row (if any) the diff shows, i.e. which buttons it gets.
+    DiffView::ActionSet localActionSet() const;
+    void updateLocalUi();
+    void updateCommitPane();
+    void onLocalStateReady();
+    // The files selected in the file list (folder rows: their files), or just `clicked` if it is
+    // not among them.
+    QStringList selectedFiles(const QString &clicked) const;
+    // `paths` plus the old paths of renamed files among them.
+    QStringList withOldPaths(const QStringList &paths) const;
+    QStringList allLocalFiles() const;
+    void fileAction(const QStringList &paths, int action);
+    void hunkAction(const QString &path, int hunk, int action);
+    void afterLocalOp(const OpResult &r, const QString &what, const QList<DiscardBackup> &backups);
+    void onCommitted(const OpResult &r);
+
     // state
     Repository m_repo;
     QString m_repoPath;
@@ -199,6 +234,9 @@ private:
     QToolButton *m_patchMode, *m_treeMode;
     QListView *m_files;
     FileListModel *m_fileModel;
+    FileListDelegate *m_fileDelegate;
+    QToolButton *m_stageAllBtn, *m_unstageAllBtn;
+    QPointer<CommitPane> m_commitPane;
 
     // The all-zero id is a valid selection (local uncommitted changes), hence the flag.
     Oid m_selected;
@@ -225,6 +263,12 @@ private:
     quint64 m_diffSeq = 0;
     QFutureWatcher<DiffJob> m_diffWatcher;
     QFutureWatcher<NearbyRefs> m_nearbyWatcher;
+    QFutureWatcher<LocalState> m_localWatcher;
+    bool m_localPending = false;    // refresh again when the running one is done
+    quint64 m_quietDiffSeq = 0;     // a refresh of the diff shown: redisplay only if it changed
+    QFileSystemWatcher *m_gitWatcher = nullptr;
+    QTimer *m_refreshTimer = nullptr;
+    QList<QList<DiscardBackup>> m_discards;   // backups of discards / deletes, oldest first
     std::shared_ptr<std::atomic<bool>> m_nearbyCancel;
     FindSpec m_findSpec;
     bool m_contentSearchDone = true;
