@@ -4,8 +4,9 @@
 
 gitq is a desktop application for browsing and inspecting the history of git repositories. It
 presents the commit graph, commit details and diffs in a single window, lets the user search and
-filter history, and offers a small set of everyday history operations (branching, tagging,
-cherry-pick, revert, reset) directly from the history view.
+filter history, offers a small set of everyday history operations (branching, tagging,
+cherry-pick, revert, reset) directly from the history view, and prepares commits: staging and
+discarding files and hunks and writing the commit message while reviewing the diff.
 
 It is written in C++20 with Qt 6 Widgets and libgit2, targets Linux desktops, and is distributed
 under the GPL v2.
@@ -35,18 +36,20 @@ gitq fills the gap with a fast, focused history browser that:
    changed lines matching a pattern; search within diffs.
 4. **Everyday operations.** Create branches and tags, check out, cherry-pick, revert, reset, write
    patches, and compare arbitrary commits, all from context menus.
-5. **Performance.** Remain responsive on repositories with hundreds of thousands of commits: load
+5. **Commit preparation.** Stage, unstage and discard whole files or single hunks, delete new
+   files, and commit (or amend) the staged changes with a message written while reviewing them,
+   without leaving the history view.
+6. **Performance.** Remain responsive on repositories with hundreds of thousands of commits: load
    incrementally, lay out the graph incrementally, and run expensive work (reference reachability,
    searches) in the background.
-6. **Desktop integration.** Follow the system light/dark theme, support configurable fonts and
+7. **Desktop integration.** Follow the system light/dark theme, support configurable fonts and
    colours, remember window and pane layout, and install as a regular desktop application.
-7. **Maintainability.** Keep git access, graph layout, models and UI in separate layers with
+8. **Maintainability.** Keep git access, graph layout, models and UI in separate layers with
    automated tests that compare results against the git CLI.
 
 ## 4. Non-goals
 
-- Staging, committing, or editing the index and work tree (beyond resets and the results of
-  cherry-pick/revert).
+- Line-level (partial hunk) staging, stashing, and editing files in the work tree.
 - Network operations: fetch, pull, push, remote management.
 - Merge/rebase conflict resolution UI; conflicted operations are left for the user to finish with
   git.
@@ -115,9 +118,28 @@ gitq fills the gap with a fast, focused history browser that:
 - Diff menu: show the origin of a line, blame a line.
 - Built-in blame window.
 
-### 6.7 Layout and preferences
+### 6.7 Commit preparation
 
-- Commit list, diff and file list are dockable panes: they can be docked side by side, tabbed
+Specified in detail in [COMMIT_PREPARATION.md](COMMIT_PREPARATION.md).
+
+- Two local changes rows, kept separate: unstaged (index → work tree, including untracked files
+  unless turned off) and staged (HEAD → index, what the next commit contains).
+- File level: stage, unstage, discard, delete untracked files; from the diff's file header bars,
+  the file list (row button, multi-selection, stage all / unstage all, context menu) and the diff's
+  context menu.
+- Hunk level: stage, unstage and discard single hunks from buttons on each hunk. A hunk is matched
+  again against a fresh diff before it is applied; a file changed in the meantime is refused.
+- Discarded and deleted content is backed up in the object database and can be restored (undo
+  last discard).
+- Commit pane: message editor with line-length guidance and a persistent draft, amend (warning
+  when HEAD is already pushed), sign-off, commit through `git commit` so that hooks and signing
+  apply; hook output is shown when a commit is refused.
+- The local changes refresh by themselves when git changes the repository and when the
+  application becomes active.
+
+### 6.8 Layout and preferences
+
+- Commit list, diff, file list and commit message are dockable panes: they can be docked side by side, tabbed
   together, or floated, with the layout shared by all repository tabs, remembered and resettable.
 - Preferences for general behaviour, colours and fonts; a reference list window; a key-binding
   reference.
@@ -129,7 +151,7 @@ gitq fills the gap with a fast, focused history browser that:
 |-----------------|---------------------------------------------------------------------------------------------|
 | Correctness     | Commit selection, ordering and parent rewriting match `git rev-list --parents` for the supported options. |
 | Responsiveness  | First rows appear while history is still loading; background work never blocks the UI thread. |
-| Safety          | Destructive operations (hard reset, branch removal) require confirmation. Operations run through libgit2, so git hooks are not executed; this is documented. |
+| Safety          | Destructive operations (hard reset, branch removal, discarding or deleting files) require confirmation; discarded content is backed up and can be restored. History operations run through libgit2, so git hooks are not executed for them; this is documented. Staging and committing run the `git` program, so hooks, signing and filters apply. |
 | Portability     | Builds with CMake ≥ 3.28 and a C++20 compiler on current Ubuntu LTS and interim releases.   |
 | Packaging       | Each release ships a `.deb` and an AppImage per supported Ubuntu version.                    |
 | Quality         | Every change passes the unit and offscreen GUI test suites in CI.                           |
@@ -138,21 +160,24 @@ gitq fills the gap with a fast, focused history browser that:
 ## 8. Architecture
 
 ```
-src/git/     libgit2 layer, no widgets: repository access, revision-argument parsing, streaming log
-             loader, diff engine, operations, search, blame, nearby-reference computation
+src/git/     git layer, no widgets: repository access, revision-argument parsing, streaming log
+             loader, diff engine, operations, search, blame, nearby-reference computation (libgit2);
+             the git program runner and commit preparation (staging, discarding, committing)
 src/graph/   incremental graph lane layout with long-edge elision
 src/model/   Qt item models for the commit list (with graph) and the file list
-src/ui/      main window, panes, delegates, diff view, dialogs, blame window
+src/ui/      main window, panes, delegates, diff view, commit pane, dialogs, blame window
 tests/       Qt Test suites; fixtures are created with the git CLI and results compared with git
 ```
 
 Dependencies: Qt 6 (Widgets, Concurrent, Test), libgit2 ≥ 1.7, and the Qt Advanced Docking System
-(fetched and linked statically at build time).
+(fetched and linked statically at build time). At run time, the `git` program (≥ 2.26) for staging
+and committing.
 
 Layering rules:
 
 - `git/`, `graph/` and `model/` do not depend on widgets and are tested without a UI.
-- The UI talks to git only through the `git/` layer.
+- The UI talks to git only through the `git/` layer. Reading uses libgit2; changes to the index, the
+  work tree and history made for commit preparation run the `git` program (`GitCli`).
 - Long-running work runs on worker threads and reports back through signals.
 
 ## 9. Delivery

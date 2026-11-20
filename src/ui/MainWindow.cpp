@@ -88,7 +88,7 @@ void MainWindow::buildUi() {
     m_tabBar->setContextMenuPolicy(Qt::CustomContextMenu);
     wl->addWidget(m_tabBar);
 
-    // The three panes are Visual Studio style dock widgets: drag a pane's tab to dock it next to
+    // The panes (Commits, Diff, Files, Commit) are Visual Studio style dock widgets: drag a pane's tab to dock it next to
     // another, tab it with one, or float it. All repository tabs share one layout; each pane is a
     // stack with one page per tab.
     ads::CDockManager::setConfigFlags(ads::CDockManager::DefaultOpaqueConfig);

@@ -6,7 +6,7 @@ The goal is gitk's behaviour and layout on a codebase that is easy to extend.
 ## Build
 
 Requirements: CMake ≥ 3.28, a C++20 compiler, Qt 6 (Widgets, Concurrent, Test, private GUI headers),
-libxcb, libgit2 ≥ 1.7. The [Qt Advanced Docking System](https://github.com/githubuser0xFFFF/Qt-Advanced-Docking-System)
+libxcb, libgit2 ≥ 1.7; at run time, `git` (≥ 2.26) for staging and committing. The [Qt Advanced Docking System](https://github.com/githubuser0xFFFF/Qt-Advanced-Docking-System)
 is downloaded at configure time and linked statically.
 
 ```sh
@@ -47,7 +47,7 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
 
 - Tabs: several repositories in one window, restored on the next start; welcome page with recent
   repositories.
-- Visual Studio style dockable panes: drag the Commits, Diff or Files title bar (or its tab, shown at the bottom when panes share an area) to dock it beside another
+- Visual Studio style dockable panes: drag the Commits, Diff, Files or Commit title bar (or its tab, shown at the bottom when panes share an area) to dock it beside another
   pane, tab it with one, or float it in its own window. To dock a floating pane again, drag its title bar onto one of the drop markers
   that appear over the main window. All repository tabs share the layout, which is remembered; View ▸ Reset layout
   restores the gitk arrangement and the View menu reopens closed panes.
@@ -104,24 +104,48 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
   diff menu (show origin of this line, blame this line).
 - Preferences (general, colours, fonts), List references (F2), gitk key bindings (Help ▸ Key bindings).
 
+## Commit preparation
+
+Beyond gitk, gitq prepares and makes commits (details in [docs/COMMIT_PREPARATION.md](docs/COMMIT_PREPARATION.md)):
+
+- The *Local uncommitted changes* row (unstaged, now including untracked files) and the *Local changes
+  checked in to index* row (staged, what gets committed) stay separate, as in gitk.
+- Stage / discard (delete, for new files) or unstage whole files from buttons on the diff's file
+  header bars, the file list (a button on the row under the mouse, multi-selection, Stage all /
+  Unstage all, context menu) or the diff's context menu.
+- Stage / discard / unstage single hunks from buttons on each `@@` line. A hunk is looked up again
+  before it is applied, so a file changed in the meantime is never patched wrongly.
+- Discarded and deleted content is backed up in the object database; Edit ▸ Undo last discard
+  restores it.
+- The Commit pane: message editor with a 72-column guide and summary length hints, a draft kept
+  across restarts, amend (with a warning for pushed commits), sign-off, and Commit (Ctrl+Return).
+  It runs `git commit`, so hooks and commit signing work.
+- The local changes refresh on their own after git changes the repository and when gitq becomes the
+  active application.
+
 ## Differences from gitk
 
 - Blame opens a built-in blame window instead of launching `git gui blame`.
-- Operations go through libgit2, so **git hooks are not run** for cherry-pick/revert commits.
-  Conflicted cherry-picks/reverts are left in the work tree for resolution with git.
+- History operations go through libgit2, so **git hooks are not run** for cherry-pick/revert
+  commits. Conflicted cherry-picks/reverts are left in the work tree for resolution with git.
+  Staging and committing (see above) run the `git` program instead, so hooks, signing and filters
+  such as git-lfs apply there.
+- Commit preparation (staging hunks and files, the Commit pane) is gitq's own; gitk leaves it to
+  `git gui`.
 - `--first-parent` views show only the followed parent (git prints all parents).
 - Settings live in `~/.config/gitq/gitq.conf`, not `~/.config/git/gitk`.
-- The commit list, diff and file list are dockable panes rather than a fixed layout.
+- The commit list, diff, file list and commit message are dockable panes rather than a fixed layout.
 
 ## Layout
 
 ```
-src/git/     libgit2 layer (no widgets): Repository, RevArgs, LogLoader, DiffEngine, Ops, Search,
-             Blame, NearbyRefs
+src/git/     git layer (no widgets): Repository, RevArgs, LogLoader, DiffEngine, Ops, Search,
+             Blame, NearbyRefs (libgit2); GitCli (runs git), Staging (stage / unstage / discard
+             files and hunks, commit)
 src/graph/   GraphLayout: incremental lane assignment with long-edge elision
 src/model/   CommitModel (list + graph), FileListModel
 src/ui/      MainWindow (tabs, menus, panes), RepoTab (one repository's views and commands), WelcomePage,
-             GraphDelegate, DiffView, dialogs, BlameWindow
+             GraphDelegate, DiffView, CommitPane, dialogs, BlameWindow
 tests/       Qt Test suites; fixtures are built with the git CLI and compared with git's output.
              bench_load / bench_diff are manual benchmarks.
 ```
