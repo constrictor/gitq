@@ -617,6 +617,7 @@ LogOptions RepoTab::currentOptions(QString *error) {
         for (QString &p : o.paths) p = QDir::cleanPath(m_prefix + QLatin1Char('/') + p);
     }
     o.showLocalChanges = Settings::instance().showLocalChanges;
+    o.showUntracked = Settings::instance().showUntracked;
     return o;
 }
 

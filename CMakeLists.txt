@@ -22,6 +22,8 @@ add_library(gitq_core STATIC
   src/git/LogLoader.h src/git/LogLoader.cpp
   src/git/DiffEngine.h src/git/DiffEngine.cpp
   src/git/Ops.h src/git/Ops.cpp
+  src/git/GitCli.h src/git/GitCli.cpp
+  src/git/Staging.h src/git/Staging.cpp
   src/git/Search.h src/git/Search.cpp
   src/git/Blame.h src/git/Blame.cpp
   src/git/NearbyRefs.h src/git/NearbyRefs.cpp
@@ -87,8 +89,8 @@ set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/constrictor/gitq")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/COPYING")
 set(CPACK_DEBIAN_PACKAGE_SECTION vcs)
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
-set(CPACK_DEBIAN_PACKAGE_DEPENDS qt6-qpa-plugins)   # xcb/wayland platform plugins (not seen by shlibdeps)
-set(CPACK_DEBIAN_PACKAGE_RECOMMENDS git)
+# xcb/wayland platform plugins (not seen by shlibdeps); git for staging and committing.
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "qt6-qpa-plugins, git")
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 set(CPACK_STRIP_FILES ON)
 set(CPACK_COMPONENTS_ALL gitq)

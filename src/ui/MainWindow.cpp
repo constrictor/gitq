@@ -536,7 +536,7 @@ void MainWindow::doPrefs() {
     Settings &st = Settings::instance();
     Settings n = dlg.result();
     n.views = st.views;
-    bool reload = n.showLocalChanges != st.showLocalChanges;
+    bool reload = n.showLocalChanges != st.showLocalChanges || n.showUntracked != st.showUntracked;
     st = n;
     st.save();
     for (RepoTab *t : std::as_const(m_tabs)) t->settingsChanged(reload);

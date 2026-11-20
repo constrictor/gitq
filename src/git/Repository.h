@@ -55,8 +55,9 @@ public:
     // Whether `ancestor` is reachable from `descendant` (or equal).
     bool isAncestor(const Oid &ancestor, const Oid &descendant) const;
 
-    // Whether there are local modifications in the index / working tree.
-    void localChanges(bool *indexChanged, bool *workdirChanged) const;
+    // Whether there are local modifications in the index / working tree (with `untracked`, new
+    // files that are not ignored count as work tree changes).
+    void localChanges(bool *indexChanged, bool *workdirChanged, bool untracked = false) const;
 
     QString configString(const QString &key, const QString &def = {}) const;
 

@@ -26,6 +26,8 @@ struct Settings {
     int maxGraphWidth = 16;      // columns
     int maxGraphPct = 50;        // percentage of the column width
     bool showLocalChanges = true;
+    bool showUntracked = true;   // list untracked files in the local changes (they can be staged)
+    bool commitSignOff = false;  // commit pane: add a Signed-off-by trailer
     bool autoSelect = true;      // auto-select SHA1 in the id field
     int autoSelLen = 40;
     bool hideRemotes = false;

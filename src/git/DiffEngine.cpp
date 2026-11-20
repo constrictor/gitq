@@ -29,6 +29,16 @@ void FileDiff::countChanges(int *added, int *removed) const {
     *removed = r;
 }
 
+QList<FileDiff::Hunk> FileDiff::hunks() const {
+    QList<Hunk> out;
+    for (int i = 0; i < lines.size(); ++i) {
+        if (!lines[i].startsWith(QLatin1String("@@"))) continue;
+        if (!out.isEmpty()) out.last().end = i;
+        out.append({i, int(lines.size())});
+    }
+    return out;
+}
+
 namespace {
 
 // Holds a git_strarray built from a QStringList.
@@ -67,6 +77,8 @@ QChar statusChar(git_delta_t s) {
     case GIT_DELTA_RENAMED: return QLatin1Char('R');
     case GIT_DELTA_COPIED: return QLatin1Char('C');
     case GIT_DELTA_TYPECHANGE: return QLatin1Char('T');
+    case GIT_DELTA_UNTRACKED: return QLatin1Char('?');
+    case GIT_DELTA_CONFLICTED: return QLatin1Char('U');
     default: return QLatin1Char('M');
     }
 }
@@ -293,7 +305,7 @@ DiffResult fromGitDiff(const Repository &repo, git_diff *diff, const DiffOptions
         f.oldPath = QString::fromUtf8(d->old_file.path);
         f.newPath = QString::fromUtf8(d->new_file.path);
         if (d->status == GIT_DELTA_DELETED) f.newPath.clear();
-        if (d->status == GIT_DELTA_ADDED) f.oldPath.clear();
+        if (d->status == GIT_DELTA_ADDED || d->status == GIT_DELTA_UNTRACKED) f.oldPath.clear();
         f.status = statusChar(d->status);
         f.binary = d->flags & GIT_DIFF_FLAG_BINARY;
         BufGuard buf;
@@ -341,6 +353,8 @@ IndexPtr repoIndex(const Repository &repo) {
         git_error_clear();
         return {};
     }
+    // The repository keeps its index in memory; git (staging, commits) may have changed the file.
+    if (git_index_read(idx, 0) < 0) git_error_clear();
     return IndexPtr(idx);
 }
 
@@ -721,6 +735,9 @@ DiffResult diffBetweenImpl(const Repository &repo, const Oid &from, const Oid &t
         TreePtr t = a.isIndex() ? TreePtr() : treeForCommit(repo, a);
         StrArray spec(withSubmodulePaths(o.paths, {t.get()}, idx.get()));
         git_diff_options opts = makeOptions(o, spec, reverse);
+        // Untracked files only in the plain "index -> work tree" diff (the local changes row).
+        if (o.includeUntracked && a.isIndex() && !reverse)
+            opts.flags |= GIT_DIFF_INCLUDE_UNTRACKED | GIT_DIFF_RECURSE_UNTRACKED_DIRS | GIT_DIFF_SHOW_UNTRACKED_CONTENT;
         if (a.isIndex()) rc = git_diff_index_to_workdir(&d, repo.raw(), idx.get(), &opts);
         else rc = git_diff_tree_to_workdir_with_index(&d, repo.raw(), t.get(), &opts);
     } else if (b.isIndex()) {

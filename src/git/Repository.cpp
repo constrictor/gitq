@@ -238,14 +238,14 @@ bool Repository::isAncestor(const Oid &ancestor, const Oid &descendant) const {
     return git_graph_descendant_of(m_repo.get(), descendant.ptr(), ancestor.ptr()) == 1;
 }
 
-void Repository::localChanges(bool *indexChanged, bool *workdirChanged) const {
+void Repository::localChanges(bool *indexChanged, bool *workdirChanged, bool untracked) const {
     *indexChanged = *workdirChanged = false;
     if (isBare()) return;
     git_status_options opts = GIT_STATUS_OPTIONS_INIT;
     opts.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
-    // Untracked files are not "changes" for gitk. Submodules count when they point at another
-    // commit or have modified content (as in `git status`; their `ignore` setting applies).
-    opts.flags = 0;
+    // Untracked files are not "changes" for gitk unless asked for. Submodules count when they point
+    // at another commit or have modified content (as in `git status`; their `ignore` setting applies).
+    opts.flags = untracked ? GIT_STATUS_OPT_INCLUDE_UNTRACKED : 0;
     git_status_list *list = nullptr;
     if (git_status_list_new(&list, m_repo.get(), &opts) < 0) {
         git_error_clear();
@@ -259,7 +259,7 @@ void Repository::localChanges(bool *indexChanged, bool *workdirChanged) const {
                          GIT_STATUS_INDEX_RENAMED | GIT_STATUS_INDEX_TYPECHANGE))
             *indexChanged = true;
         if (e->status & (GIT_STATUS_WT_MODIFIED | GIT_STATUS_WT_DELETED | GIT_STATUS_WT_TYPECHANGE |
-                         GIT_STATUS_WT_RENAMED))
+                         GIT_STATUS_WT_RENAMED | GIT_STATUS_CONFLICTED | (untracked ? GIT_STATUS_WT_NEW : 0)))
             *workdirChanged = true;
     }
 }

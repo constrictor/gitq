@@ -92,6 +92,7 @@ QWidget *PrefsDialog::generalPage() {
     intField(f, tr("Maximum graph width (lines)"), m_s.maxGraphWidth, 1, 200);
     intField(f, tr("Maximum graph width (% of pane)"), m_s.maxGraphPct, 10, 100);
     boolField(f, tr("Show local changes"), m_s.showLocalChanges);
+    boolField(f, tr("Show untracked files in local changes"), m_s.showUntracked);
     boolField(f, tr("Auto-select SHA1"), m_s.autoSelect);
     intField(f, tr("Length of commit ID to copy"), m_s.autoSelLen, 4, 40);
     boolField(f, tr("Hide remote refs"), m_s.hideRemotes);

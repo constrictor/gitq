@@ -131,6 +131,8 @@ QColor statusColor(QChar status) {
     case 'R': return QColor(0x8e, 0x5c, 0xd9);
     case 'C': return QColor(0x13, 0x9c, 0x9c);
     case 'T': return QColor(0x80, 0x80, 0x80);
+    case '?': return QColor(0x3f, 0x8f, 0xb5);   // untracked
+    case 'U': return QColor(0xc0, 0x3a, 0x8a);   // unmerged
     default: return QColor(0xd0, 0x8a, 0x2e);
     }
 }

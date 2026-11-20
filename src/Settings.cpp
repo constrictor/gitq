@@ -129,6 +129,8 @@ void Settings::load() {
     maxGraphWidth = q.value(QStringLiteral("maxGraphWidth"), maxGraphWidth).toInt();
     maxGraphPct = q.value(QStringLiteral("maxGraphPct"), maxGraphPct).toInt();
     showLocalChanges = q.value(QStringLiteral("showLocalChanges"), showLocalChanges).toBool();
+    showUntracked = q.value(QStringLiteral("showUntracked"), showUntracked).toBool();
+    commitSignOff = q.value(QStringLiteral("commitSignOff"), commitSignOff).toBool();
     autoSelect = q.value(QStringLiteral("autoSelect"), autoSelect).toBool();
     autoSelLen = q.value(QStringLiteral("autoSelLen"), autoSelLen).toInt();
     hideRemotes = q.value(QStringLiteral("hideRemotes"), hideRemotes).toBool();
@@ -197,6 +199,8 @@ void Settings::save() const {
     q.setValue(QStringLiteral("maxGraphWidth"), maxGraphWidth);
     q.setValue(QStringLiteral("maxGraphPct"), maxGraphPct);
     q.setValue(QStringLiteral("showLocalChanges"), showLocalChanges);
+    q.setValue(QStringLiteral("showUntracked"), showUntracked);
+    q.setValue(QStringLiteral("commitSignOff"), commitSignOff);
     q.setValue(QStringLiteral("autoSelect"), autoSelect);
     q.setValue(QStringLiteral("autoSelLen"), autoSelLen);
     q.setValue(QStringLiteral("hideRemotes"), hideRemotes);

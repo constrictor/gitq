@@ -26,6 +26,7 @@ struct DiffOptions {
     QStringList paths;                // limit to these repo-relative paths (empty: all)
     int submodules = SubmoduleSummary;
     QStringList expandSubmodules;     // SubmoduleLog: submodule paths whose file changes are included
+    bool includeUntracked = false;    // index -> work tree: list untracked files (status '?')
     bool operator==(const DiffOptions &) const = default;
 };
 
@@ -59,7 +60,7 @@ struct SubmoduleChange {
 struct FileDiff {
     QString oldPath;
     QString newPath;
-    QChar status = QLatin1Char('M');  // A, M, D, R, C, T
+    QChar status = QLatin1Char('M');  // A, M, D, R, C, T; '?' untracked, 'U' unmerged (local changes)
     int numParents = 1;               // >1 for combined (merge) diffs
     bool binary = false;
     QStringList lines;                // full text, git format, without trailing newlines
@@ -69,6 +70,12 @@ struct FileDiff {
     QString path() const { return newPath.isEmpty() ? oldPath : newPath; }
     // Numbers of added and removed lines (for combined diffs: lines added / removed against any parent).
     void countChanges(int *added, int *removed) const;
+
+    // The hunks in `lines`: index of each "@@" line and of the line after the hunk's last line.
+    struct Hunk {
+        int start, end;
+    };
+    QList<Hunk> hunks() const;
 };
 
 struct DiffResult {

@@ -267,7 +267,7 @@ QString loadLog(const Repository &repo, const LogOptions &o, const std::function
         for (const Oid &inc : revs.include) inView = inView || repo.isAncestor(head, inc);
         for (const Oid &exc : revs.exclude) inView = inView && !repo.isAncestor(head, exc);
         bool indexChanged = false, workdirChanged = false;
-        if (inView && !head.isNull()) repo.localChanges(&indexChanged, &workdirChanged);
+        if (inView && !head.isNull()) repo.localChanges(&indexChanged, &workdirChanged, o.showUntracked);
         auto pseudo = [&](const Oid &id, const Oid &parent, const QString &subject) {
             auto info = QSharedPointer<CommitInfo>::create();
             info->id = id;

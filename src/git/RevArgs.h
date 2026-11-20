@@ -43,6 +43,7 @@ struct LogOptions {
 
     // Not a rev-list option: prepend pseudo commits for local changes when HEAD is in the view.
     bool showLocalChanges = false;
+    bool showUntracked = false;   // untracked files make the local changes row appear
 
     bool operator==(const LogOptions &) const = default;
 };
