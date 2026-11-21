@@ -155,14 +155,30 @@ void drawStatusBadge(QPainter *p, const QRectF &r, QChar status) {
 QColor addedColor() { return Settings::darkTheme() ? QColor(0x56, 0xd3, 0x64) : QColor(0x1f, 0x88, 0x3d); }
 QColor removedColor() { return Settings::darkTheme() ? QColor(0xff, 0x7b, 0x72) : QColor(0xcf, 0x22, 0x2e); }
 
-double drawChangeBar(QPainter *p, double right, double cy, double size, int added, int removed) {
+double drawChangeBar(QPainter *p, double right, double cy, double size, int added, int removed,
+                     const QColor &onSelection) {
     const int total = added + removed;
     const int green = total ? qRound(5.0 * added / total) : 0;
     const QColor none = Settings::mix(Settings::instance().bgColor, Settings::instance().fgColor, 0.2);
     for (int i = 4; i >= 0; --i) {
         right -= size;
-        p->fillRect(QRectF(right, cy - size / 2, size - 1.5, size - 1.5),
-                    total == 0 ? none : i < green ? addedColor() : removedColor());
+        const QRectF block(right, cy - size / 2, size - 1.5, size - 1.5);
+        if (!onSelection.isValid()) {
+            p->fillRect(block, total == 0 ? none : i < green ? addedColor() : removedColor());
+        } else if (total == 0) {
+            QColor faint = onSelection;
+            faint.setAlphaF(0.35f);
+            p->fillRect(block, faint);
+        } else if (i < green) {
+            p->fillRect(block, onSelection);
+        } else {
+            p->save();
+            p->setRenderHint(QPainter::Antialiasing, false);
+            p->setPen(QPen(onSelection, 1));
+            p->setBrush(Qt::NoBrush);
+            p->drawRect(block.adjusted(0.5, 0.5, -1, -1));
+            p->restore();
+        }
         right -= 0.5;
     }
     return right;

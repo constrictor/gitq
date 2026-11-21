@@ -1282,9 +1282,12 @@ void RepoTab::fileMenu(const QPoint &pos) {
     // Local changes: stage / unstage / discard the selected files.
     const DiffView::ActionSet set = localActionSet();
     if (set != DiffView::NoActions) {
-        const QStringList files = idx.data(FileListModel::IsFolderRole).toBool()
-                                      ? selectedFiles(QString())
-                                      : selectedFiles(path);
+        // A folder row: the selection if the row is part of it, otherwise the folder's files.
+        const bool folderRow = idx.data(FileListModel::IsFolderRole).toBool();
+        const QStringList files = !folderRow ? selectedFiles(path)
+                                  : m_files->selectionModel()->isSelected(idx) ? selectedFiles(QString())
+                                                                               : folderFiles(path);
+        if (files.isEmpty()) return;
         int actions = 0;
         int untracked = 0;
         for (const QString &f : files) {
@@ -1464,15 +1467,8 @@ QStringList RepoTab::selectedFiles(const QString &clicked) const {
     const QModelIndexList rows = m_files->selectionModel()->selectedIndexes();
     for (const QModelIndex &i : rows) {
         if (i.data(FileListModel::IsFolderRole).toBool()) {
-            // The files listed under the folder row: those directly in the folder.
-            QString folder = i.data(FileListModel::NameRole).toString();
-            if (folder.endsWith(QLatin1Char('/'))) folder.chop(1);
-            for (const FileDiff &f : m_lastDiff.files) {
-                const QString p = f.path();
-                if (f.inSubmodule.isEmpty() && p.left(qMax(0, int(p.lastIndexOf(QLatin1Char('/'))))) == folder &&
-                    !out.contains(p))
-                    out << p;
-            }
+            for (const QString &p : folderFiles(i.data(FileListModel::NameRole).toString()))
+                if (!out.contains(p)) out << p;
             continue;
         }
         const QString p = i.data(FileListModel::PathRole).toString();
@@ -1481,6 +1477,17 @@ QStringList RepoTab::selectedFiles(const QString &clicked) const {
         if (!out.contains(p)) out << p;
     }
     if (!clickedSelected) return {clicked};
+    return out;
+}
+
+QStringList RepoTab::folderFiles(QString folder) const {
+    // The files listed under a folder row: those directly in the folder.
+    if (folder.endsWith(QLatin1Char('/'))) folder.chop(1);
+    QStringList out;
+    for (const FileDiff &f : m_lastDiff.files) {
+        const QString p = f.path();
+        if (f.inSubmodule.isEmpty() && p.left(qMax(0, int(p.lastIndexOf(QLatin1Char('/'))))) == folder) out << p;
+    }
     return out;
 }
 

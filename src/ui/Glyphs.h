@@ -39,7 +39,10 @@ QColor addedColor();
 QColor removedColor();
 // Five small squares, green and red in the proportion of added to removed lines, ending at
 // `right` and centred on `cy`; returns the left edge.
-double drawChangeBar(QPainter *p, double right, double cy, double size, int added, int removed);
+// On a selected row, pass the selection's text colour as `onSelection`: added blocks are drawn solid
+// in it and removed ones as outlines, as the usual green / red would vanish on the highlight.
+double drawChangeBar(QPainter *p, double right, double cy, double size, int added, int removed,
+                     const QColor &onSelection = QColor());
 
 // An icon painting `g` at any size. With an invalid `color` it uses the application palette's
 // text colour (button text for active, a dimmed variant for disabled icons) at paint time.

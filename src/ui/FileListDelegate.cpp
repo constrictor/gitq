@@ -135,7 +135,7 @@ void FileListDelegate::paint(QPainter *p, const QStyleOptionViewItem &optIn, con
         right -= 8;
     } else if (added >= 0 && removed >= 0 && r.width() > 140) {
         // The bar only when there is room to spare for it.
-        if (r.width() > 260) right = drawChangeBar(p, right, cy, qMax(4.0, fm.height() * 0.4), added, removed) - 6;
+        if (r.width() > 260) right = drawChangeBar(p, right, cy, qMax(4.0, fm.height() * 0.4), added, removed, selected ? fg : QColor()) - 6;
         p->setFont(small);
         const QString m = QStringLiteral("−%1").arg(removed), a = QStringLiteral("+%1").arg(added);
         right -= sm.horizontalAdvance(m);

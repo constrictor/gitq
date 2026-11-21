@@ -6,6 +6,7 @@
 #include "ui/Syntax.h"
 
 #include <QApplication>
+#include <cmath>
 #include <QClipboard>
 #include <QContextMenuEvent>
 #include <QHelpEvent>
@@ -243,7 +244,7 @@ protected:
             setFormat(0, qMin(marks, int(text.size())), mark);
             break;
         }
-        case DiffView::HunkStyle: setFormat(0, int(text.size()), fg(Settings::mix(st.diffHunkColor, st.bgColor, 0.25))); break;
+        case DiffView::HunkStyle: setFormat(0, int(text.size()), fg(st.diffHunkColor)); break;
         case DiffView::MetaStyle: setFormat(0, int(text.size()), fg(Settings::mix(st.fgColor, st.bgColor, 0.5))); break;
         case DiffView::ErrorStyle: setFormat(0, int(text.size()), fg(Qt::red)); break;
         case DiffView::FileSepStyle: {
@@ -1657,6 +1658,15 @@ void DiffView::setFindSpec(const FindSpec &spec) {
     updateExtraSelections();
 }
 
+namespace {
+// Text colour for a highlight: the syntax colours can be unreadable on it (red on olive, say).
+QColor textOn(const QColor &bg) {
+    auto lin = [](double c) { return c <= 0.03928 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); };
+    const double l = 0.2126 * lin(bg.redF()) + 0.7152 * lin(bg.greenF()) + 0.0722 * lin(bg.blueF());
+    return l > 0.18 ? QColor(Qt::black) : QColor(Qt::white);   // whichever contrasts more
+}
+} // namespace
+
 void DiffView::updateExtraSelections() {
     const Settings &st = Settings::instance();
     QList<QTextEdit::ExtraSelection> sels;
@@ -1669,6 +1679,7 @@ void DiffView::updateExtraSelections() {
                 s.cursor.setPosition(b.position() + r.first);
                 s.cursor.setPosition(b.position() + r.first + r.second, QTextCursor::KeepAnchor);
                 s.format.setBackground(st.foundBgColor);
+                s.format.setForeground(textOn(st.foundBgColor));
                 sels << s;
             }
         }
@@ -1684,7 +1695,9 @@ void DiffView::updateExtraSelections() {
             QTextEdit::ExtraSelection s;
             s.cursor = c;
             bool current = !m_currentSearchHit.isNull() && c.selectionStart() == m_currentSearchHit.selectionStart();
-            s.format.setBackground(current ? st.currentSearchBgColor : st.foundBgColor);
+            const QColor bg = current ? st.currentSearchBgColor : st.foundBgColor;
+            s.format.setBackground(bg);
+            s.format.setForeground(textOn(bg));
             sels << s;
         }
     }

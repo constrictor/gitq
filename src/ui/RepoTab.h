@@ -187,6 +187,8 @@ private:
     // The files selected in the file list (folder rows: their files), or just `clicked` if it is
     // not among them.
     QStringList selectedFiles(const QString &clicked) const;
+    // The files listed under the folder row `folder` (grouped file list).
+    QStringList folderFiles(QString folder) const;
     // `paths` plus the old paths of renamed files among them.
     QStringList withOldPaths(const QStringList &paths) const;
     QStringList allLocalFiles() const;

@@ -17,6 +17,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QStackedWidget>
 #include <QStatusBar>
@@ -95,6 +96,7 @@ void MainWindow::buildUi() {
     ads::CDockManager::setConfigFlag(ads::CDockManager::FocusHighlighting, true);
     ads::CDockManager::setConfigFlag(ads::CDockManager::TabsAtBottom, true);
     m_dockManager = new ads::CDockManager(m_workspace);
+    fixDockStyle();
     wl->addWidget(m_dockManager, 1);
     m_central->addWidget(m_workspace);
 
@@ -186,9 +188,23 @@ void MainWindow::buildMenus() {
                                     QString::fromLatin1(qVersion())));
     });
     help->addAction(tr("&Key bindings"), this, [this] {
+        // The text is tab-separated; a table keeps the descriptions in one column.
+        QString html = QStringLiteral("<table cellspacing='0' cellpadding='1'>");
+        const QStringList lines = keyBindingsText().split(QLatin1Char('\n'));
+        static const QRegularExpression tabs(QStringLiteral("\t+"));
+        for (const QString &line : lines) {
+            const QStringList cols = line.split(tabs);
+            if (cols.size() >= 2)
+                html += QStringLiteral("<tr><td style='white-space:nowrap; padding-right:16px'>%1</td><td>%2</td></tr>")
+                            .arg(cols[0].toHtmlEscaped(), cols.mid(1).join(QLatin1Char(' ')).toHtmlEscaped());
+            else if (!line.trimmed().isEmpty())
+                html += QStringLiteral("<tr><td colspan='2'><b>%1</b><br></td></tr>").arg(line.toHtmlEscaped());
+        }
+        html += QStringLiteral("</table>");
         QMessageBox box(this);
         box.setWindowTitle(tr("Gitq key bindings"));
-        box.setText(keyBindingsText());
+        box.setTextFormat(Qt::RichText);
+        box.setText(html);
         box.exec();
     });
 }
@@ -305,11 +321,34 @@ void MainWindow::closeEvent(QCloseEvent *e) {
     QMainWindow::closeEvent(e);
 }
 
+namespace {
+constexpr char kDockStyleMarker[] = "/* gitq: readable tab labels */";
+}
+
+void MainWindow::fixDockStyle() {
+    // QtADS's dark stylesheet colours inactive tab labels (and a floating pane's title) with
+    // palette(light), which dark themes such as Breeze Dark make a dark grey on a dark grey. Give
+    // them a dimmed text colour instead; the active and focused tabs' own rules are more specific.
+    QString sheet = m_dockManager->styleSheet();
+    const int at = int(sheet.indexOf(QLatin1String(kDockStyleMarker)));
+    if (at >= 0) sheet.truncate(at);
+    if (Settings::darkTheme()) {
+        const QPalette pal = QApplication::palette();
+        const QString dim = Settings::mix(pal.color(QPalette::Window), pal.color(QPalette::WindowText), 0.7).name();
+        sheet += QStringLiteral("%1\nads--CDockWidgetTab QLabel { color: %2; }\n"
+                                "ads--CFloatingDockContainer #floatingTitleLabel { color: %3; }\n")
+                     .arg(QLatin1String(kDockStyleMarker), dim, pal.color(QPalette::WindowText).name());
+    }
+    if (sheet != m_dockManager->styleSheet()) m_dockManager->setStyleSheet(sheet);
+}
+
 void MainWindow::changeEvent(QEvent *e) {
     if (e->type() == QEvent::ApplicationPaletteChange) {
         // Light/dark theme switch: move colours that follow the theme to the new defaults.
         Settings::instance().updateThemeColors();
         for (RepoTab *t : std::as_const(m_tabs)) t->settingsChanged(false);
+        // After QtADS has loaded the stylesheet for the new theme.
+        QTimer::singleShot(0, this, &MainWindow::fixDockStyle);
     }
     QMainWindow::changeEvent(e);
 }

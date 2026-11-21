@@ -87,6 +87,9 @@ void BlameWindow::populate(const BlameResult &r) {
     }
     m_table->resizeColumnsToContents();
     m_table->resizeRowsToContents();
+    // Sizing the columns to their contents stops the last one from stretching: stretch it again.
+    m_table->horizontalHeader()->setStretchLastSection(false);
+    m_table->horizontalHeader()->setStretchLastSection(true);
     if (m_line > 0 && m_line <= m_table->rowCount()) {
         m_table->selectRow(m_line - 1);
         m_table->scrollToItem(m_table->item(m_line - 1, 0), QAbstractItemView::PositionAtCenter);

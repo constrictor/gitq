@@ -85,6 +85,7 @@ CommitPane::CommitPane(const Repository *repo, QWidget *parent) : QWidget(parent
     m_info = new QLabel;
     m_info->setObjectName(QStringLiteral("commitInfo"));
     m_info->setTextFormat(Qt::RichText);
+    m_info->setWordWrap(true);   // the hints don't fit a narrow pane on one line
     l->addWidget(m_info);
 
     auto *row = new QHBoxLayout;

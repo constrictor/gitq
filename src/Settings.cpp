@@ -55,11 +55,14 @@ bool Settings::darkTheme() {
 
 Settings Settings::themeDefaults() {
     Settings d;
-    if (!darkTheme()) return d;
     const QPalette pal = QGuiApplication::palette();
+    // The selected commit: a tint of the desktop's selection colour, light enough for the normal
+    // text, graph and ref labels to stay readable on it.
+    const bool dark = darkTheme();
+    d.selectBgColor = mix(dark ? pal.color(QPalette::Base) : d.bgColor, pal.color(QPalette::Highlight), dark ? 0.35 : 0.3);
+    if (!dark) return d;
     d.bgColor = pal.color(QPalette::Base);
     d.fgColor = pal.color(QPalette::Text);
-    d.selectBgColor = mix(d.bgColor, d.fgColor, 0.25);
     d.graphColors = {QColor(0x4d, 0xa3, 0xff), QColor(0xff, 0x6b, 0x6b), QColor(0x51, 0xcf, 0x66),
                      QColor(0xb1, 0x97, 0xfc), QColor(0xff, 0xa9, 0x4d), QColor(0x3b, 0xc9, 0xdb),
                      QColor(0xf0, 0x65, 0xa8), QColor(0xc9, 0xa2, 0x7a)};
@@ -157,13 +160,16 @@ void Settings::load() {
     const Settings legacy = legacyDefaults();
     const Settings defs = themeDefaults();
     activeDefaults() = defs;
+    // The dark theme's selection colour before it followed the desktop's (grey).
+    const QColor oldDarkSelect = mix(defs.bgColor, defs.fgColor, 0.25);
     q.beginGroup(QStringLiteral("colors"));
     for (const ColorDef &c : kColors) {
         this->*c.member = defs.*c.member;
         QVariant v = q.value(QLatin1String(c.key));
         if (!v.isValid()) continue;
         QColor col(v.toString());
-        if (col.isValid() && col != light.*c.member && col != defs.*c.member && col != legacy.*c.member)
+        if (col.isValid() && col != light.*c.member && col != defs.*c.member && col != legacy.*c.member &&
+            !(c.member == &Settings::selectBgColor && col == oldDarkSelect))
             this->*c.member = col;
     }
     graphColors = defs.graphColors;

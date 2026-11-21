@@ -55,6 +55,8 @@ public:
 protected:
     void closeEvent(QCloseEvent *e) override;
     void changeEvent(QEvent *e) override;
+    // Readable dock tab labels in dark themes (see the .cpp).
+    void fixDockStyle();
 
 private:
     void buildUi();
