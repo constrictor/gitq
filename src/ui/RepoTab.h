@@ -217,13 +217,11 @@ private:
 
     // Pane contents other than this widget; owned by this tab but parented to the window's panes.
     QPointer<QWidget> m_diffPane, m_filesPane;
-    QLineEdit *m_shaEdit;
     QToolButton *m_backBtn, *m_fwdBtn;
-    QLabel *m_rowLabel;
     QProgressBar *m_progress;
     QLineEdit *m_findEdit;
     QAction *m_findUp, *m_findDown, *m_findCase, *m_findRegex;
-    Choice *m_findWhat;   // all fields, headline, message, author, committer, paths, -S, -G
+    Choice *m_findWhat;   // all fields, headline, message, author, committer, paths, -S, -G, go to commit
     QTimer *m_findTimer;
     QLineEdit *m_searchEdit;
     QToolButton *m_modeDiff, *m_modeOld, *m_modeNew;

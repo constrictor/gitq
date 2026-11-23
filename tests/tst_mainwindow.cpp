@@ -59,8 +59,19 @@ class TestMainWindow : public QObject {
 
     void waitLoaded(QWidget *w) {
         QTRY_VERIFY_WITH_TIMEOUT(model(w)->rowCount() > 0, 10000);
-        QTRY_VERIFY_WITH_TIMEOUT(!child<QLineEdit>(w, "shaEdit")->text().isEmpty(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(!selectedId(w).isEmpty(), 10000);
         QTest::qWait(200);
+    }
+
+    // The id of the commit selected in the list of the tab on display (or of the given tab).
+    QString selectedId(QWidget *w) {
+        QTreeView *list = nullptr;
+        for (QTreeView *v : w->findChildren<QTreeView *>("commitList"))
+            if (v->isVisible() || !list) list = v;
+        if (!list) return {};
+        const QModelIndex i = list->currentIndex();
+        const CommitInfo *c = i.isValid() ? static_cast<CommitModel *>(list->model())->commitAt(i.row()) : nullptr;
+        return c ? c->id.hex() : QString();
     }
 
     bool m_selectedIsWorkdir(QWidget *w) {
@@ -72,9 +83,15 @@ class TestMainWindow : public QObject {
     QStringList diffFiles(QWidget *w) { return child<DiffView>(w, "diffView")->files(); }
 
     void selectId(QWidget *w, const QString &id) {
-        auto *sha = child<QLineEdit>(w, "shaEdit");
-        sha->setText(id);
-        QMetaObject::invokeMethod(sha, "returnPressed");
+        // Through the find bar's "go to commit" mode, leaving the find bar as it was.
+        auto *find = child<QLineEdit>(w, "findEdit");
+        auto *what = child<Choice>(w, "findWhat");
+        const int before = what->currentIndex();
+        what->setCurrentIndex(8);
+        find->setText(id);
+        QMetaObject::invokeMethod(find, "returnPressed");
+        find->clear();
+        what->setCurrentIndex(before);
         QTRY_VERIFY(!diffFiles(w).isEmpty() || diffText(w).contains(QStringLiteral("Parent: ")));
     }
 
@@ -110,12 +127,15 @@ private slots:
         w.show();
         waitLoaded(&w);
         QCOMPARE(model(&w)->rowCount(), 5);
-        QCOMPARE(child<QLineEdit>(&w, "shaEdit")->text(), repo->rev("HEAD"));
+        QCOMPARE(selectedId(&w), repo->rev("HEAD"));
         QVERIFY(diffText(&w).contains(QStringLiteral("Tester <tester@example.com>")));
         QVERIFY(diffText(&w).contains(QStringLiteral("After merge")));   // the subject heading
         QVERIFY(diffFiles(&w).contains(QStringLiteral("README")));
         QTRY_VERIFY(diffText(&w).contains(QStringLiteral("Branches: master")));
-        QVERIFY(child<QLabel>(&w, "rowLabel")->text().contains(QStringLiteral("1 / 5")));
+        // The find bar sits above the list; no SHA1 row below it.
+        QVERIFY(child<QLineEdit>(&w, "findEdit")->mapTo(&w, QPoint()).y() <
+                child<QTreeView>(&w, "commitList")->mapTo(&w, QPoint()).y());
+        QVERIFY(!w.findChild<QLineEdit *>("shaEdit"));
         shot(&w, QStringLiteral("01-head"));
 
         // Clicking the id chip in the header copies the commit id.
@@ -157,7 +177,7 @@ private slots:
         find->setText(QStringLiteral("feature"));
         QTRY_COMPARE(model(&w)->highlighted().size(), 2);   // "Add feature", "Merge feature"
         QMetaObject::invokeMethod(find, "returnPressed");
-        QTRY_COMPARE(child<QLineEdit>(&w, "shaEdit")->text(), mergeId);
+        QTRY_COMPARE(selectedId(&w), mergeId);
 
         child<Choice>(&w, "findWhat")->setCurrentIndex(5);   // touching paths
         find->setText(QStringLiteral("src/feature.c"));
@@ -257,13 +277,13 @@ private slots:
         QTRY_COMPARE(w.tabCount(), 2);
         RepoTab *t = w.currentTab();
         QCOMPARE(QFileInfo(t->displayPath()).canonicalFilePath(), QFileInfo(r.path() + "/lib/sub").canonicalFilePath());
-        QTRY_COMPARE(t->findChild<QLineEdit *>("shaEdit")->text(), s1);
+        QTRY_COMPARE(selectedId(t), s1);
         // Asking again switches to that tab.
         w.setCurrentTab(0);
         emit diff->submoduleOpenRequested("lib/sub", Oid());
         QCOMPARE(w.tabCount(), 2);
         QCOMPARE(w.currentTab(), t);
-        QTRY_COMPARE(t->findChild<QLineEdit *>("shaEdit")->text(), s2);
+        QTRY_COMPARE(selectedId(t), s2);
         // Tree mode lists the submodule's files.
         w.setCurrentTab(0);
         for (QToolButton *b : w.findChildren<QToolButton *>("treeMode"))
@@ -282,7 +302,8 @@ private slots:
         QVERIFY(QTest::qWaitForWindowActive(&w));
         waitLoaded(&w);
         auto *list = child<QTreeView>(&w, "commitList");
-        auto *sha = child<QLineEdit>(&w, "shaEdit");
+        auto *find = child<QLineEdit>(&w, "findEdit");
+        auto *what = child<Choice>(&w, "findWhat");
         auto *diff = child<DiffView>(&w, "diffView");
         auto row = [&] { return list->currentIndex().row(); };
         list->setFocus();
@@ -300,13 +321,23 @@ private slots:
         QTest::keyClick(diff, Qt::Key_Right);
         QTRY_COMPARE(row(), 2);
         QTest::keyClick(diff, Qt::Key_G);
-        QTRY_VERIFY(sha->hasFocus());
-        QTest::keyClicks(sha, "n");   // typing goes to the field, not the shortcut
+        QTRY_VERIFY(find->hasFocus());   // the find bar, in "go to commit" mode
+        QCOMPARE(what->currentIndex(), 8);
+        QTest::keyClicks(find, "n");   // typing goes to the field, not the shortcut
         QCOMPARE(row(), 2);
-        QCOMPARE(sha->text(), QStringLiteral("n"));
-        sha->setText(repo->rev("HEAD").left(7));
-        QTest::keyClick(sha, Qt::Key_Return);
+        QCOMPARE(find->text(), QStringLiteral("n"));
+        QVERIFY(model(&w)->highlighted().isEmpty());   // nothing is searched in this mode
+        find->setText(repo->rev("HEAD").left(7));
+        QTest::keyClick(find, Qt::Key_Return);
         QTRY_COMPARE(row(), 0);
+        find->setText(QStringLiteral("HEAD~2"));   // any revision
+        QTest::keyClick(find, Qt::Key_Return);
+        QTRY_COMPARE(selectedId(&w), repo->rev("HEAD~2"));
+        list->setFocus();
+        QTest::keyClick(list, Qt::Key_Home);
+        QTRY_COMPARE(row(), 0);
+        find->clear();
+        what->setCurrentIndex(0);
         QTest::keyClick(list, Qt::Key_1, Qt::ControlModifier);   // first parent
         QTRY_COMPARE(row(), 1);
     }
@@ -319,7 +350,7 @@ private slots:
         waitLoaded(&w);
         QCOMPARE(model(&w)->rowCount(), 6);
         QVERIFY(model(&w)->commitAt(0)->id.isWorkdir());
-        QCOMPARE(child<QLineEdit>(&w, "shaEdit")->text(), repo->rev("HEAD"));   // HEAD stays selected
+        QCOMPARE(selectedId(&w), repo->rev("HEAD"));   // HEAD stays selected
         auto *list = child<QTreeView>(&w, "commitList");
         list->setCurrentIndex(model(&w)->index(0, 0));
         QTRY_VERIFY(diffFiles(&w).contains(QStringLiteral("README")));
@@ -391,17 +422,17 @@ private slots:
         QTRY_VERIFY(child<QLabel>(&w, "commitInfo")->text().contains(QStringLiteral("2 files staged")));
         QVERIFY(!button->isEnabled());   // no message yet
         edit->setFocus();
-        const QString selectedBefore = child<QLineEdit>(&w, "shaEdit")->text();
+        const QString selectedBefore = selectedId(&w);
         QTest::keyClicks(edit, QStringLiteral("pnj Add five and new"));
         QCOMPARE(edit->toPlainText(), QStringLiteral("pnj Add five and new"));
-        QCOMPARE(child<QLineEdit>(&w, "shaEdit")->text(), selectedBefore);
+        QCOMPARE(selectedId(&w), selectedBefore);
         QVERIFY(button->isEnabled());
 
         // The draft survives until the commit.
         QTRY_VERIFY(QFile::exists(QDir(r.path()).filePath(QStringLiteral(".git/gitq/COMMIT_DRAFT"))));
         QTest::keyClick(edit, Qt::Key_Return, Qt::ControlModifier);
         QTRY_COMPARE(r.git({"log", "-1", "--format=%s"}).trimmed(), QStringLiteral("pnj Add five and new"));
-        QTRY_COMPARE(child<QLineEdit>(&w, "shaEdit")->text(), r.rev("HEAD"));   // the new commit is shown
+        QTRY_COMPARE(selectedId(&w), r.rev("HEAD"));   // the new commit is shown
         QVERIFY(edit->toPlainText().isEmpty());
         QVERIFY(!QFile::exists(QDir(r.path()).filePath(QStringLiteral(".git/gitq/COMMIT_DRAFT"))));
         QTRY_COMPARE(model(&w)->rowCount(), 3);   // local changes (thirty) + 2 commits
@@ -417,7 +448,7 @@ private slots:
         QTRY_VERIFY(!amend->isChecked());   // reset once the commit is done
         QCOMPARE(r.git({"log", "-1", "--format=%s"}).trimmed(), QStringLiteral("Add five and new"));
         QCOMPARE(r.git({"rev-list", "--count", "HEAD"}).trimmed(), QStringLiteral("2"));
-        QTRY_COMPARE(child<QLineEdit>(&w, "shaEdit")->text(), r.rev("HEAD"));
+        QTRY_COMPARE(selectedId(&w), r.rev("HEAD"));
     }
 
     void commitPaneDocked() {
@@ -455,6 +486,10 @@ private slots:
         QVERIFY(!list->header()->isVisible());
         QCOMPARE(list->visualRect(model(&w)->index(1, 0)).top(), list->sizeHintForRow(0));
         shot(&w, QStringLiteral("06-multiline-list"));
+        w.resize(480, 900);   // commit ids get shortened
+        QTest::qWait(100);
+        shot(&w, QStringLiteral("06b-multiline-narrow"));
+        w.resize(1200, 900);
 
         toggle->trigger();
         QVERIFY(!Settings::instance().commitListMultiline);
@@ -622,9 +657,9 @@ private slots:
             QVERIFY(QTest::qWaitForWindowActive(floating));
             auto *diff = child<DiffView>(floating, "diffView");
             diff->setFocus();
-            QString before = child<QLineEdit>(&w, "shaEdit")->text();
+            QString before = selectedId(&w);
             QTest::keyClick(diff, Qt::Key_N);
-            QTRY_VERIFY(child<QLineEdit>(&w, "shaEdit")->text() != before);
+            QTRY_VERIFY(selectedId(&w) != before);
 
             // Tab the file list with the commit list; the layout is saved on close.
             reset(&w);

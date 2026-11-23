@@ -57,11 +57,13 @@ simplification and parent rewriting (tested against `git rev-list --parents`).
   (relative, "3 hours ago", with the exact time in the tooltip; Preferences switch to absolute dates);
   the row under the mouse is highlighted; streaming load; long edges elided with arrows like gitk; local
   uncommitted / staged changes rows.
-- SHA1 field (goto by id prefix, ref name or any revision), back/forward history, row counter.
-- Find bar: one search field with match-case (Aa) and regex (.*) toggles and previous / next arrows, and
-  a chip choosing what to search: text in all fields / headline / message / author / committer,
-  *touching paths*, *adding/removing string* (`-S`), *changing lines matching* (`-G`); matches are
-  bold, Return / Shift-Up / Shift-Down / `?` move between them.
+- Multi-line commit list (View menu): author and date under the headline, the commit id at the top
+  right (shortened when the row is narrow).
+- Find bar above the list: back/forward history buttons, one search field with match-case (Aa) and
+  regex (.*) toggles and previous / next arrows, and a chip choosing what to search: text in all fields /
+  headline / message / author / committer, *touching paths*, *adding/removing string* (`-S`), *changing
+  lines matching* (`-G`); matches are bold, Return / Shift-Up / Shift-Down / `?` move between them.
+  The chip's *commit id* mode (`g`) goes to a commit by id prefix, ref name or any revision.
 - Details pane: a header card with the author's initials in a coloured circle, the subject as a heading,
   author and committer with relative and exact dates, the commit id (click to copy), the commit's ref
   labels, clickable Parent/Child links and Branches / Follows / Precedes (computed in the background);

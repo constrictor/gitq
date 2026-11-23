@@ -80,8 +80,8 @@ gitq fills the gap with a fast, focused history browser that:
 - Graph column with lane assignment, merge/fork edges, and elision of long edges (drawn as arrows).
 - Reference labels for local branches, remote branches, tags, with the checked-out branch emphasised.
 - Author and date columns (relative or absolute dates); rows for uncommitted and staged local changes.
-- Streaming load with a row counter; selection by SHA prefix, ref name or any revision expression;
-  back/forward navigation history.
+- Streaming load with a progress indicator; selection by SHA prefix, ref name or any revision
+  expression (the find bar's "commit id" mode); back/forward navigation history.
 
 ### 6.3 Commit details and diff
 

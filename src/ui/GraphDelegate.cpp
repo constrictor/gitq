@@ -195,9 +195,40 @@ void GraphDelegate::paint(QPainter *p, const QStyleOptionViewItem &optIn, const 
         x += 4;
     }
 
+    // Multi-line rows: the commit id at the top right, dimmed like the second line; the full id if
+    // it fits beside the whole headline, else shortened, and left out on very narrow rows.
+    int textRight = cell.right();
+    QFont plain = font;
+    plain.setBold(false);
+    const QFontMetrics fm(plain);
+    const QColor dim = Settings::mix(st.fgColor, bg, 0.4);
+    if (m_multiline && c && !c->id.isPseudo()) {
+        const int right = cell.right() - 4;
+        const int gap = fm.horizontalAdvance(QLatin1Char(' ')) * 3;
+        const int headline = QFontMetrics(font).horizontalAdvance(opt.text);
+        const int minHeadline = QFontMetrics(font).horizontalAdvance(QLatin1Char('x')) * 8;
+        QString sha;
+        for (int n : {40, 16, 10, 7}) {
+            const QString s = c->id.shortHex(n);
+            if (x + headline + gap + fm.horizontalAdvance(s) <= right) {
+                sha = s;
+                break;
+            }
+        }
+        if (sha.isEmpty() && x + minHeadline + gap + fm.horizontalAdvance(c->id.shortHex(7)) <= right)
+            sha = c->id.shortHex(7);
+        if (!sha.isEmpty()) {
+            const int sw = fm.horizontalAdvance(sha);
+            p->setFont(plain);
+            p->setPen(dim);
+            p->drawText(QRect(right - sw, line1.top(), sw, lineH), Qt::AlignVCenter | Qt::AlignRight, sha);
+            textRight = right - sw - gap;
+        }
+    }
+
     p->setFont(font);
     p->setPen(st.fgColor);
-    QRect textRect(x, line1.top(), cell.right() - x, lineH);
+    QRect textRect(x, line1.top(), textRight - x, lineH);
     if (textRect.width() > 0)
         p->drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
                     QFontMetrics(font).elidedText(opt.text, Qt::ElideRight, textRect.width()));
@@ -205,11 +236,8 @@ void GraphDelegate::paint(QPainter *p, const QStyleOptionViewItem &optIn, const 
     if (!m_multiline || !c) return;
 
     // Second line: author on the left, date on the right, dimmed and never bold.
-    QFont plain = font;
-    plain.setBold(false);
-    const QFontMetrics fm(plain);
     p->setFont(plain);
-    p->setPen(Settings::mix(st.fgColor, bg, 0.4));
+    p->setPen(dim);
     QRect line2(graphRight, line1.bottom() + 1, cell.right() - 4 - graphRight, lineH);
     if (line2.width() <= 0) return;
     const QString date = c->id.isPseudo() ? QString() : m_model->displayDate(c->author.time);

@@ -54,6 +54,7 @@ namespace gitq {
 
 namespace {
 constexpr int kFindPaths = 5;   // "touching paths" in the find bar's choice
+constexpr int kFindGoto = 8;    // "go to commit" (id prefix, ref or revision) in the find bar's choice
 
 QString fileCount(int n) { return n == 1 ? RepoTab::tr("1 file") : RepoTab::tr("%1 files").arg(n); }
 }
@@ -194,40 +195,27 @@ void RepoTab::buildUi() {
     m_list->header()->setSectionResizeMode(CommitModel::DateColumn, QHeaderView::Interactive);
     m_list->header()->resizeSection(CommitModel::AuthorColumn, 180);
     m_list->header()->resizeSection(CommitModel::DateColumn, 160);
-    tl->addWidget(m_list, 1);
 
-    auto *bar = new QHBoxLayout;
-    auto *shaLabel = new QLabel(tr("SHA1 ID:"));
-    m_shaEdit = new QLineEdit;
-    m_shaEdit->setObjectName(QStringLiteral("shaEdit"));
-    m_shaEdit->setMinimumWidth(QFontMetrics(font()).horizontalAdvance(QLatin1Char('0')) * 42);
-    m_backBtn = new QToolButton;
-    m_backBtn->setArrowType(Qt::LeftArrow);
-    m_backBtn->setToolTip(tr("Back"));
-    m_fwdBtn = new QToolButton;
-    m_fwdBtn->setArrowType(Qt::RightArrow);
-    m_fwdBtn->setToolTip(tr("Forward"));
-    m_rowLabel = new QLabel(tr("Row"));
-    m_rowLabel->setObjectName(QStringLiteral("rowLabel"));
-    m_progress = new QProgressBar;
-    m_progress->setRange(0, 0);
-    m_progress->setMaximumWidth(150);
-    m_progress->setTextVisible(false);
-    m_progress->hide();
-    bar->addWidget(shaLabel);
-    bar->addWidget(m_shaEdit);
-    bar->addWidget(m_backBtn);
-    bar->addWidget(m_fwdBtn);
-    bar->addSpacing(10);
-    bar->addWidget(m_rowLabel);
-    bar->addStretch(1);
-    bar->addWidget(m_progress);
-    tl->addLayout(bar);
-
-    // Find bar: one field, with match-case and regex toggles and previous / next arrows inside it,
-    // and a chip choosing what to search.
+    // Find bar, above the list: back / forward through the selection history; one field, with
+    // match-case and regex toggles and previous / next arrows inside it; a chip choosing what to
+    // search (or go to a commit by id or revision); a progress bar while commits load.
     auto *fbar = new QHBoxLayout;
+    fbar->setContentsMargins(2, 2, 2, 0);
     fbar->setSpacing(4);
+    m_backBtn = new QToolButton;
+    m_backBtn->setObjectName(QStringLiteral("backButton"));
+    m_backBtn->setArrowType(Qt::LeftArrow);
+    m_backBtn->setAutoRaise(true);
+    m_backBtn->setEnabled(false);
+    m_backBtn->setToolTip(tr("Back (Alt-Left)"));
+    m_fwdBtn = new QToolButton;
+    m_fwdBtn->setObjectName(QStringLiteral("forwardButton"));
+    m_fwdBtn->setArrowType(Qt::RightArrow);
+    m_fwdBtn->setAutoRaise(true);
+    m_fwdBtn->setEnabled(false);
+    m_fwdBtn->setToolTip(tr("Forward (Alt-Right)"));
+    fbar->addWidget(m_backBtn);
+    fbar->addWidget(m_fwdBtn);
     m_findEdit = new QLineEdit;
     m_findEdit->setObjectName(QStringLiteral("findEdit"));
     m_findEdit->setClearButtonEnabled(true);
@@ -249,7 +237,8 @@ void RepoTab::buildUi() {
     fbar->addWidget(m_findEdit, 1);
 
     m_findWhat = new Choice({tr("All fields"), tr("Headline"), tr("Message"), tr("Author"), tr("Committer"),
-                             tr("Touching paths"), tr("Adding/removing string"), tr("Changing lines matching")},
+                             tr("Touching paths"), tr("Adding/removing string"), tr("Changing lines matching"),
+                             tr("Commit id or revision")},
                             0, this);
     m_findWhat->setObjectName(QStringLiteral("findWhat"));
     auto *whatBtn = new QToolButton;
@@ -270,10 +259,20 @@ void RepoTab::buildUi() {
     what[5]->setText(tr("Touch paths"));
     what[6]->setText(tr("Add or remove the string (-S)"));
     what[7]->setText(tr("Change lines matching (-G)"));
-    whatMenu->addActions(what.mid(5));
+    whatMenu->addActions(what.mid(5, 3));
+    whatMenu->addSection(tr("Go to"));
+    what[kFindGoto]->setText(tr("Commit id, ref or revision"));
+    whatMenu->addAction(what[kFindGoto]);
     whatBtn->setMenu(whatMenu);
     fbar->addWidget(whatBtn);
+    m_progress = new QProgressBar;
+    m_progress->setRange(0, 0);
+    m_progress->setMaximumWidth(100);
+    m_progress->setTextVisible(false);
+    m_progress->hide();
+    fbar->addWidget(m_progress);
     tl->addLayout(fbar);
+    tl->addWidget(m_list, 1);
 
     // The chip shows the current choice; the toggles show their state by colour (line edit
     // actions have no checked look of their own).
@@ -281,19 +280,22 @@ void RepoTab::buildUi() {
         static const char *const chips[] = {QT_TR_NOOP("in: all fields"), QT_TR_NOOP("in: headline"),
                                             QT_TR_NOOP("in: message"), QT_TR_NOOP("in: author"),
                                             QT_TR_NOOP("in: committer"), QT_TR_NOOP("paths"),
-                                            QT_TR_NOOP("-S string"), QT_TR_NOOP("-G regex")};
+                                            QT_TR_NOOP("-S string"), QT_TR_NOOP("-G regex"), QT_TR_NOOP("commit id")};
         static const char *const hints[] = {QT_TR_NOOP("Find commits"), QT_TR_NOOP("Find commits by headline"),
                                             QT_TR_NOOP("Find commits by message"), QT_TR_NOOP("Find commits by author"),
                                             QT_TR_NOOP("Find commits by committer"),
                                             QT_TR_NOOP("Find commits touching paths (space separated)"),
                                             QT_TR_NOOP("Find commits adding or removing a string"),
-                                            QT_TR_NOOP("Find commits changing lines matching")};
-        const int i = qBound(0, m_findWhat->currentIndex(), 7);
+                                            QT_TR_NOOP("Find commits changing lines matching"),
+                                            QT_TR_NOOP("Go to commit: id prefix, ref or revision")};
+        const int i = qBound(0, m_findWhat->currentIndex(), kFindGoto);
         whatBtn->setText(tr(chips[i]));
         m_findEdit->setPlaceholderText(tr(hints[i]));
-        const bool text = i != kFindPaths;   // paths are matched as pathspecs
+        const bool text = i != kFindPaths && i != kFindGoto;   // paths are matched as pathspecs
         m_findCase->setVisible(text);
         m_findRegex->setVisible(text);
+        m_findUp->setVisible(i != kFindGoto);
+        m_findDown->setToolTip(i == kFindGoto ? tr("Go to commit (Return)") : tr("Find next, older (Return)"));
         const QPalette pal = palette();
         auto tint = [&](QAction *a, Glyph g) {
             a->setIcon(glyphIcon(g, a->isChecked() ? pal.color(QPalette::Highlight)
@@ -511,7 +513,6 @@ void RepoTab::buildUi() {
             [this](const QModelIndex &cur) { onCurrentRowChanged(cur.isValid() ? cur.row() : -1); });
     connect(m_list, &CommitListView::rowContextMenu, this, &RepoTab::rowMenu);
     connect(m_list, &CommitListView::refContextMenu, this, &RepoTab::refMenu);
-    connect(m_shaEdit, &QLineEdit::returnPressed, this, &RepoTab::gotoCommitFromField);
     connect(m_backBtn, &QToolButton::clicked, this, [this] { goHistory(-1); });
     connect(m_fwdBtn, &QToolButton::clicked, this, [this] { goHistory(1); });
 
@@ -641,8 +642,9 @@ void RepoTab::buildShortcuts() {
     key(Qt::Key_D, [diffScroll] { diffScroll(18); });
     key(Qt::Key_U, [diffScroll] { diffScroll(-18); });
     key(Qt::Key_G, [this] {
-        m_shaEdit->clear();
-        m_shaEdit->setFocus();
+        m_findWhat->setCurrentIndex(kFindGoto);
+        m_findEdit->clear();
+        m_findEdit->setFocus();
     });
     key(Qt::Key_Slash, [this] { m_findEdit->setFocus(); });
     key(Qt::Key_Question, [this] { findNext(-1); });
@@ -702,7 +704,6 @@ void RepoTab::startLoad(bool keepSelection) {
     m_diff->clearAll();
     m_fileModel->setEntries({}, false);
     m_progress->show();
-    m_rowLabel->setText(tr("Row"));
     m_loadTimer.start();
     m_loader->start(m_repoPath, m_opts);
     updateCommitPane();
@@ -727,9 +728,6 @@ void RepoTab::onCommitsLoaded(const CommitPtrList &batch) {
             m_list->scrollTo(m_model->index(r, 0), QAbstractItemView::PositionAtCenter);
         }
     }
-    int sel = selectedRow();
-    m_rowLabel->setText(sel >= 0 ? tr("Row %1 / %2").arg(sel + 1).arg(m_model->rowCount())
-                                 : tr("Row - / %1").arg(m_model->rowCount()));
 }
 
 void RepoTab::onLoadFinished(const QString &error) {
@@ -753,9 +751,6 @@ void RepoTab::onLoadFinished(const QString &error) {
     m_selectFirstWhenDone = false;
     m_pendingSelect.reset();
     if (!m_findSpec.isEmpty() && m_findSpec.type != FindSpec::Containing) runFind();
-    int sel = selectedRow();
-    m_rowLabel->setText(sel >= 0 ? tr("Row %1 / %2").arg(sel + 1).arg(m_model->rowCount())
-                                 : tr("Row - / %1").arg(m_model->rowCount()));
 }
 
 void RepoTab::rereadRefs() {
@@ -829,7 +824,6 @@ void RepoTab::moveSelection(int delta) {
 void RepoTab::onCurrentRowChanged(int row) {
     const CommitInfo *c = m_model->commitAt(row);
     if (!c) return;
-    m_rowLabel->setText(tr("Row %1 / %2").arg(row + 1).arg(m_model->rowCount()));
     if (m_hasSelection && c->id == m_selected && !m_rangeDiff) return;
     showCommit(c->id);
 }
@@ -846,13 +840,10 @@ void RepoTab::showCommit(const Oid &id) {
     m_hasSelection = true;
     m_rangeDiff = false;
 
-    // SHA1 field, auto-select / copy to the X11 selection like gitk.
-    m_shaEdit->setText(id.hex());
-    if (Settings::instance().autoSelect) {
-        m_shaEdit->setSelection(0, qBound(4, Settings::instance().autoSelLen, 40));
-        if (QApplication::clipboard()->supportsSelection())
-            QApplication::clipboard()->setText(id.hex().left(Settings::instance().autoSelLen), QClipboard::Selection);
-    }
+    // Copy the id to the X11 selection, like gitk's auto-selected SHA1 field.
+    if (Settings::instance().autoSelect && !id.isPseudo() && QApplication::clipboard()->supportsSelection())
+        QApplication::clipboard()->setText(id.hex().left(qBound(4, Settings::instance().autoSelLen, 40)),
+                                           QClipboard::Selection);
 
     if (!m_navigating) {
         if (m_historyIndex < 0 || m_history.value(m_historyIndex) != id) {
@@ -1068,7 +1059,7 @@ void RepoTab::goToParent(int n) {
 }
 
 void RepoTab::gotoCommitFromField() {
-    QString text = m_shaEdit->text().trimmed();
+    QString text = m_findEdit->text().trimmed();
     if (text.isEmpty()) return;
     static const QRegularExpression hex(QStringLiteral("^[0-9a-fA-F]{4,40}$"));
     Oid id;
@@ -1099,6 +1090,7 @@ void RepoTab::gotoCommitFromField() {
 FindSpec RepoTab::currentFindSpec() const {
     FindSpec s;
     const int what = m_findWhat->currentIndex();
+    if (what == kFindGoto) return s;   // going to a commit, not finding: nothing highlighted
     s.type = what < 5 ? FindSpec::Containing : FindSpec::Type(what - 4);
     s.field = what < 5 ? FindSpec::Field(what) : FindSpec::AllFields;
     const bool matchCase = m_findCase->isChecked();
@@ -1138,6 +1130,10 @@ void RepoTab::runFind() {
 void RepoTab::findNext(int dir) {
     if (m_findEdit->text().isEmpty()) {
         m_findEdit->setFocus();
+        return;
+    }
+    if (m_findWhat->currentIndex() == kFindGoto) {
+        gotoCommitFromField();
         return;
     }
     if (!(currentFindSpec() == m_findSpec)) runFind();
