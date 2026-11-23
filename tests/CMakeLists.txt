@@ -14,6 +14,7 @@ gitq_test(tst_staging)
 gitq_test(tst_search)
 gitq_test(tst_commitmodel)
 gitq_test(tst_syntax)
+gitq_test(tst_theme)
 gitq_test(tst_mainwindow)
 
 add_executable(bench_load bench_load.cpp)

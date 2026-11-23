@@ -5,6 +5,7 @@
 #include "ui/Dialogs.h"
 #include "ui/PrefsDialog.h"
 #include "ui/RepoTab.h"
+#include "ui/Theme.h"
 #include "ui/WelcomePage.h"
 
 #include <QActionGroup>
@@ -344,6 +345,7 @@ void MainWindow::fixDockStyle() {
 
 void MainWindow::changeEvent(QEvent *e) {
     if (e->type() == QEvent::ApplicationPaletteChange) {
+        Theme::repairApplicationPalette();
         // Light/dark theme switch: move colours that follow the theme to the new defaults.
         Settings::instance().updateThemeColors();
         for (RepoTab *t : std::as_const(m_tabs)) t->settingsChanged(false);

@@ -66,6 +66,7 @@ add_library(gitq_ui STATIC
   src/ui/Dialogs.h src/ui/Dialogs.cpp
   src/ui/BlameWindow.h src/ui/BlameWindow.cpp
   src/ui/CommitPane.h src/ui/CommitPane.cpp
+  src/ui/Theme.h src/ui/Theme.cpp
 )
 target_link_libraries(gitq_ui PUBLIC gitq_core ads::qtadvanceddocking-qt6)
 target_compile_options(gitq_ui PRIVATE -Wall -Wextra)

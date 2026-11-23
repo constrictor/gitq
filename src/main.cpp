@@ -3,6 +3,7 @@
 #include "git/GitPtr.h"
 #include "git/Repository.h"
 #include "ui/MainWindow.h"
+#include "ui/Theme.h"
 
 #include <QApplication>
 #include <QDir>
@@ -37,6 +38,8 @@ int main(int argc, char **argv) {
     QApplication::setDesktopFileName(QStringLiteral("gitq"));
     QApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral("gitq")));
     gitq::LibGit2Init libgit2;
+    gitq::Theme::repairApplicationPalette();   // before the settings derive colours from it
+    gitq::Theme::installStyleFixes();
 
     QStringList args = QApplication::arguments().mid(1);
 
