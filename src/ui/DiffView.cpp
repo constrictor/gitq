@@ -1584,6 +1584,35 @@ bool DiffView::scrollToLine(const QString &path, int line, bool newSide) {
     return false;
 }
 
+int DiffView::hunkBlock(const QString &path, int hunk) const {
+    for (int i = 0; i < m_meta.size(); ++i)
+        if (m_style[i] == HunkStyle && m_meta[i].hunk == hunk && m_meta[i].path == path) return i;
+    return -1;
+}
+
+int DiffView::hunkCount(const QString &path) const {
+    int n = 0;
+    for (int i = 0; i < m_meta.size(); ++i)
+        if (m_style[i] == HunkStyle && m_meta[i].path == path) n = qMax(n, m_meta[i].hunk + 1);
+    return n;
+}
+
+std::optional<int> DiffView::hunkLineOffset(const QString &path, int hunk) const {
+    const int b = hunkBlock(path, hunk);
+    if (b < 0) return std::nullopt;
+    return document()->findBlockByNumber(b).firstLineNumber() - verticalScrollBar()->value();
+}
+
+bool DiffView::scrollToHunk(const QString &path, int hunk, int lineOffset) {
+    const int b = hunkBlock(path, hunk);
+    if (b < 0) return false;
+    const QTextBlock block = document()->findBlockByNumber(b);
+    QTextCursor c(block);
+    setTextCursor(c);
+    verticalScrollBar()->setValue(block.firstLineNumber() - lineOffset);
+    return true;
+}
+
 QStringList DiffView::files() const {
     QStringList out;
     for (const FileHeader &h : m_fileStarts) out << h.path;

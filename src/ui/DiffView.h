@@ -84,6 +84,12 @@ public:
     DiffLineInfo lineInfoAt(const QPoint &viewportPos) const;
     // Scroll to the given line of a file's diff (new side when `newSide`), returns success.
     bool scrollToLine(const QString &path, int line, bool newSide);
+    // Hunks of a file's diff: how many are shown, the visual line of the `hunk`th one's "@@" line
+    // relative to the top of the view (none if not shown), and scrolling so that line is
+    // `lineOffset` lines below the top (false if not shown).
+    int hunkCount(const QString &path) const;
+    std::optional<int> hunkLineOffset(const QString &path, int hunk) const;
+    bool scrollToHunk(const QString &path, int hunk, int lineOffset);
 
     // Diff-pane search (gitk's "Search" field).
     void setSearchText(const QString &text);
@@ -163,6 +169,8 @@ private:
     // The actions offered for a file / for its hunks with the current action set.
     int fileActionsFor(const FileDiff &f) const;
     int hunkActionsFor(const FileDiff &f) const;
+    // Block number of the `hunk`th "@@" line of the file at `path`, -1 if not shown.
+    int hunkBlock(const QString &path, int hunk) const;
     QList<Button> headerButtons(const QRectF &r, const FileHeader &h) const;
     QList<Button> hunkButtons(const QRectF &r, const QString &path, int hunk, int actions) const;
     QList<Button> visibleButtons() const;

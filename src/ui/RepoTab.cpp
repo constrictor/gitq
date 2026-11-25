@@ -836,6 +836,7 @@ QString RepoTab::headlineOf(const Oid &id) {
 void RepoTab::showCommit(const Oid &id) {
     const CommitInfo *c = m_model->commitAt(m_model->rowOf(id));
     if (!c) return;
+    if (m_hunkAnchor && m_hunkAnchor->commit != id) m_hunkAnchor.reset();
     m_selected = id;
     m_hasSelection = true;
     m_rangeDiff = false;
@@ -946,6 +947,7 @@ void RepoTab::onDiffReady() {
         if (same(job.diff, m_lastDiff)) return;
     }
     m_lastDiff = job.diff;
+    int keep = 0;
     // Re-render the header + diff (the header may already be present for this commit).
     if (!m_rangeDiff) {
         const CommitInfo *c = m_model->commitAt(m_model->rowOf(m_selected));
@@ -953,7 +955,7 @@ void RepoTab::onDiffReady() {
         QList<DiffView::Link> parents, children;
         for (const Oid &p : c->parents) parents.append({p, headlineOf(p)});
         for (const Oid &ch : m_model->childrenOf(m_selected)) children.append({ch, headlineOf(ch)});
-        int keep = m_diff->verticalScrollBar()->value();
+        keep = m_diff->verticalScrollBar()->value();
         m_diff->showHeader(*c, m_model->refsFor(m_selected), m_refs.headBranch, parents, children,
                            Settings::instance().dateFormat);
         if (m_nearbyWatcher.isFinished() && m_nearbyWatcher.future().isValid()) {
@@ -963,7 +965,7 @@ void RepoTab::onDiffReady() {
         m_diff->verticalScrollBar()->setValue(keep);
     } else {
         // Redisplay (options changed): start from the header again.
-        int keep = m_diff->verticalScrollBar()->value();
+        keep = m_diff->verticalScrollBar()->value();
         m_diff->showRangeHeader(m_rangeHeader);
         m_diff->verticalScrollBar()->setValue(keep);
     }
@@ -974,6 +976,9 @@ void RepoTab::onDiffReady() {
     m_diff->setActions(localActionSet(), !m_ignoreSpace->isChecked() && m_modeDiff->isChecked());
     m_diff->appendDiff(job.diff);
     m_diff->setFindSpec(m_findSpec);
+    // A refresh of the local changes shown: stay where we were (the header alone was too short).
+    if (job.seq == m_quietDiffSeq) m_diff->verticalScrollBar()->setValue(keep);
+    if (m_hunkAnchor && !m_rangeDiff && m_hunkAnchor->commit == m_selected) applyHunkAnchor();
     if (m_pendingLine && !m_rangeDiff && m_pendingLine->commit == m_selected) {
         m_diff->scrollToLine(m_pendingLine->path, m_pendingLine->line, true);
         m_pendingLine.reset();
@@ -986,6 +991,26 @@ void RepoTab::onDiffReady() {
         fillFileList();
     }
     updateLocalUi();
+}
+
+void RepoTab::applyHunkAnchor() {
+    const HunkAnchor a = *m_hunkAnchor;
+    m_hunkAnchor.reset();
+    const QStringList shown = m_diff->files();
+    auto show = [&](const QString &path, int hunk) {
+        if (hunk >= 0 && m_diff->scrollToHunk(path, hunk, a.lineOffset)) return true;
+        if (!shown.contains(path)) return false;
+        m_diff->scrollToFile(path);   // a file without hunks (untracked, binary)
+        return true;
+    };
+    // The hunk that came after: the next one of the file, else the first of a file after it.
+    if (a.hunk < m_diff->hunkCount(a.path) && show(a.path, a.hunk)) return;
+    for (const QString &p : a.filesAfter)
+        if (show(p, m_diff->hunkCount(p) > 0 ? 0 : -1)) return;
+    // None after it: the one before.
+    if (a.hunk > 0 && show(a.path, qMin(a.hunk, m_diff->hunkCount(a.path)) - 1)) return;
+    for (auto it = a.filesBefore.crbegin(); it != a.filesBefore.crend(); ++it)
+        if (show(*it, m_diff->hunkCount(*it) - 1)) return;
 }
 
 void RepoTab::fillFileList() {
@@ -1573,8 +1598,14 @@ void RepoTab::hunkAction(const QString &path, int hunk, int action) {
         const Ops::HunkAction op = action == DiffView::StageAction     ? Ops::StageHunk
                                    : action == DiffView::UnstageAction ? Ops::UnstageHunk
                                                                        : Ops::DiscardHunk;
+        // Show the hunk that follows where this one is once the diff is refreshed.
+        const QStringList files = m_diff->files();
+        const int at = int(files.indexOf(path));
+        if (const std::optional<int> offset = m_diff->hunkLineOffset(path, hunk); offset && at >= 0)
+            m_hunkAnchor = HunkAnchor{m_selected, path, hunk, *offset, files.mid(0, at), files.mid(at + 1)};
         QList<DiscardBackup> backups;
         OpResult r = Ops::applyHunk(m_repo, ref, op, &backups);
+        if (!r.ok) m_hunkAnchor.reset();
         if (r.ok) r.message = op == Ops::StageHunk     ? tr("Staged a hunk of %1").arg(path)
                               : op == Ops::UnstageHunk ? tr("Unstaged a hunk of %1").arg(path)
                                                        : tr("Discarded a hunk of %1").arg(path);

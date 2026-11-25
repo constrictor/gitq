@@ -249,6 +249,17 @@ private:
         int line = 0;
     };
     std::optional<PendingLine> m_pendingLine;   // scroll there once that commit's diff is shown
+    // A hunk staged / unstaged / discarded: once the local changes are shown again, the hunk that
+    // follows it is shown where it was (`lineOffset` lines below the top of the diff view).
+    struct HunkAnchor {
+        Oid commit;
+        QString path;
+        int hunk = 0;
+        int lineOffset = 0;
+        QStringList filesBefore, filesAfter;   // the other files shown then, in order
+    };
+    std::optional<HunkAnchor> m_hunkAnchor;
+    void applyHunkAnchor();
     QSet<QString> m_expandedSubmodules;         // submodules whose files are shown (SubmoduleLog)
     bool m_selectFirstWhenDone = false;
     QList<Oid> m_history;

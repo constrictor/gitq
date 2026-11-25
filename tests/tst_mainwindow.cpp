@@ -451,6 +451,55 @@ private slots:
         QTRY_COMPARE(selectedId(&w), r.rev("HEAD"));
     }
 
+    void stageHunkShowsNextHunk() {
+        // Files with long hunks, so that the diff scrolls.
+        auto numbered = [](int n) {
+            QByteArray t;
+            for (int i = 1; i <= n; ++i) t += QByteArray::number(i) + '\n';
+            return t;
+        };
+        auto changed = [](QByteArray t, const QList<int> &starts, const QByteArray &tag) {
+            for (int s : starts)
+                for (int i = s; i < s + 15; ++i)
+                    t.replace('\n' + QByteArray::number(i) + '\n', '\n' + tag + QByteArray::number(i) + '\n');
+            return t;
+        };
+        test::TestRepo r;
+        r.commit("Base", {{"f.txt", numbered(200)}, {"g.txt", numbered(400)}});
+        r.write("f.txt", changed(numbered(200), {5, 70, 140}, "f"));
+        r.write("g.txt", changed(numbered(400), {5, 70, 140, 210, 280, 350}, "g"));
+        const QString f = QStringLiteral("f.txt"), g = QStringLiteral("g.txt");
+
+        MainWindow w(r.path(), {});
+        w.resize(1200, 900);
+        w.show();
+        waitLoaded(&w);
+        auto *list = child<QTreeView>(&w, "commitList");
+        list->setCurrentIndex(model(&w)->index(0, 0));
+        auto *diff = child<DiffView>(&w, "diffView");
+        QTRY_COMPARE(diff->hunkCount(g), 6);
+        QCOMPARE(diff->hunkCount(f), 3);
+
+        // Stage f.txt's second hunk: the index row appears (a reload), its third hunk takes its place.
+        QVERIFY(diff->scrollToHunk(f, 1, 10));
+        QCOMPARE(diff->hunkLineOffset(f, 1).value_or(-999), 10);
+        QMetaObject::invokeMethod(diff, "hunkActionRequested", Q_ARG(QString, f), Q_ARG(int, 1),
+                                  Q_ARG(int, DiffView::StageAction));
+        QTRY_COMPARE(model(&w)->rowCount(), 3);
+        QTRY_COMPARE(diff->hunkCount(f), 2);
+        QVERIFY(m_selectedIsWorkdir(&w));
+        QVERIFY(!diffText(&w).contains(QStringLiteral("+f75")));
+        QTRY_COMPARE(diff->hunkLineOffset(f, 1).value_or(-999), 10);
+        QVERIFY(diffText(&w).contains(QStringLiteral("+f145")));
+        QVERIFY(diff->verticalScrollBar()->value() > 0);
+
+        // Again (a refresh of the diff shown): f.txt's last hunk, so g.txt's first one comes next.
+        QMetaObject::invokeMethod(diff, "hunkActionRequested", Q_ARG(QString, f), Q_ARG(int, 1),
+                                  Q_ARG(int, DiffView::StageAction));
+        QTRY_COMPARE(diff->hunkCount(f), 1);
+        QTRY_COMPARE(diff->hunkLineOffset(g, 0).value_or(-999), 10);
+    }
+
     void commitPaneDocked() {
         MainWindow w(repo->path(), {});
         w.resize(1200, 900);
