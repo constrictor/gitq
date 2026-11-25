@@ -1059,6 +1059,12 @@ void DiffView::rerenderBody() {
     verticalScrollBar()->setValue(keep);
 }
 
+void DiffView::replaceDiff(const DiffResult &diff) {
+    if (!m_hasResult) return;
+    m_lastResult = diff;
+    rerenderBody();
+}
+
 void DiffView::appendDiff(const DiffResult &diff) {
     const int keep = verticalScrollBar()->value();
     m_lastResult = diff;

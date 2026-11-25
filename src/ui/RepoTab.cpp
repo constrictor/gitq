@@ -18,6 +18,7 @@
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
+#include <QScopedValueRollback>
 #include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
@@ -389,6 +390,11 @@ void RepoTab::buildUi() {
     wordBtn->setText(m_wordDiff->currentText());
     connect(m_wordDiff, &Choice::currentIndexChanged, wordBtn, [this, wordBtn] { wordBtn->setText(m_wordDiff->currentText()); });
     mbar->addWidget(wordBtn);
+    m_onlySelected = new QCheckBox(tr("Selected files only"));
+    m_onlySelected->setObjectName(QStringLiteral("onlySelectedFiles"));
+    m_onlySelected->setToolTip(tr("Show only the diff of the files selected in the file list"));
+    m_onlySelected->setChecked(Settings::instance().onlySelectedFiles);
+    mbar->addWidget(m_onlySelected);
     mbar->addSpacing(6);
 
     // Search in the diff: the field finds as you type; the arrows (Ctrl-R / Ctrl-S) go to the
@@ -552,6 +558,18 @@ void RepoTab::buildUi() {
     connect(m_patchMode, &QToolButton::toggled, this, [this](bool) { fillFileList(); });
 
     connect(m_files, &QListView::clicked, this, &RepoTab::onFileClicked);
+    connect(m_files->selectionModel(), &QItemSelectionModel::selectionChanged, this, &RepoTab::onFileSelectionChanged);
+    connect(m_onlySelected, &QCheckBox::toggled, this, [this](bool on) {
+        Settings::instance().onlySelectedFiles = on;
+        m_onlyFiles.clear();
+        if (on) {
+            onFileSelectionChanged();
+        } else {
+            const QString top = m_diff->fileAtTop();
+            m_diff->replaceDiff(m_lastDiff);
+            if (!top.isEmpty()) m_diff->scrollToFile(top);
+        }
+    });
     connect(m_files, &QListView::customContextMenuRequested, this, &RepoTab::fileMenu);
     connect(m_diff, &DiffView::commitLinkActivated, this, [this](const Oid &id) {
         if (!selectCommit(id)) emit statusMessage(tr("Commit %1 is not in the current view").arg(id.shortHex(10)), 5000);
@@ -618,6 +636,14 @@ void RepoTab::buildShortcuts() {
     };
     auto nextFile = [this](int dir) {
         const auto &entries = m_fileModel->entries();
+        if (onlySelectedActive()) {   // the other files aren't shown: select the next one
+            int target = m_files->currentIndex().isValid() ? m_files->currentIndex().row() + dir : 0;
+            while (target >= 0 && target < entries.size() && entries[target].path.isEmpty()) target += dir;
+            if (target < 0 || target >= entries.size()) return;
+            m_files->selectionModel()->setCurrentIndex(m_fileModel->index(target), QItemSelectionModel::ClearAndSelect);
+            m_files->scrollTo(m_fileModel->index(target));
+            return;
+        }
         QString cur = m_diff->fileAtTop();
         int idx = cur.isEmpty() ? 0 : m_fileModel->rowOfPath(cur);
         int target = idx + dir;
@@ -702,7 +728,9 @@ void RepoTab::startLoad(bool keepSelection) {
     m_selected = Oid();
     m_hasSelection = false;
     m_diff->clearAll();
+    m_fillingFiles = true;
     m_fileModel->setEntries({}, false);
+    m_fillingFiles = false;
     m_progress->show();
     m_loadTimer.start();
     m_loader->start(m_repoPath, m_opts);
@@ -974,23 +1002,95 @@ void RepoTab::onDiffReady() {
     m_diff->setWordMode(DiffView::WordMode(m_wordDiff->currentIndex()));
     // Hunk buttons only on the diff git can apply: whitespace changes not ignored, changes shown.
     m_diff->setActions(localActionSet(), !m_ignoreSpace->isChecked() && m_modeDiff->isChecked());
-    m_diff->appendDiff(job.diff);
+    bool switched = false;
+    m_diff->appendDiff(onlySelectedDiff(job.diff, &switched));
     m_diff->setFindSpec(m_findSpec);
     // A refresh of the local changes shown: stay where we were (the header alone was too short).
     if (job.seq == m_quietDiffSeq) m_diff->verticalScrollBar()->setValue(keep);
+    if (switched) {   // the files shown went away: show the next one from its start
+        m_hunkAnchor.reset();
+        m_diff->scrollToFile(m_onlyFiles.first());
+    }
     if (m_hunkAnchor && !m_rangeDiff && m_hunkAnchor->commit == m_selected) applyHunkAnchor();
     if (m_pendingLine && !m_rangeDiff && m_pendingLine->commit == m_selected) {
         m_diff->scrollToLine(m_pendingLine->path, m_pendingLine->line, true);
         m_pendingLine.reset();
     }
+    m_fillingFiles = true;
     if (m_treeMode->isChecked()) {
         QList<FileListModel::Entry> entries;
         for (const QString &p : job.tree) entries.append({p, QChar()});
         m_fileModel->setEntries(entries, false);
     } else {
         fillFileList();
+        if (onlySelectedActive() && !m_onlyFiles.isEmpty()) selectFilesInList(m_onlyFiles);
     }
+    m_fillingFiles = false;
     updateLocalUi();
+}
+
+bool RepoTab::onlySelectedActive() const { return m_onlySelected->isChecked() && m_patchMode->isChecked(); }
+
+QString RepoTab::diffKey() const {
+    return m_rangeDiff ? m_diffFrom.hex() + QLatin1Char('.') + m_diffTo.hex() : m_selected.hex();
+}
+
+DiffResult RepoTab::onlySelectedDiff(const DiffResult &diff, bool *switched) {
+    if (!onlySelectedActive() || m_onlyFiles.isEmpty()) return diff;
+    QStringList paths;
+    for (const FileDiff &f : diff.files) paths << f.path();
+    QStringList show;
+    for (const QString &p : paths)
+        if (m_onlyFiles.contains(p)) show << p;
+    if (show.isEmpty() && m_onlyKey == diffKey()) {
+        // The files shown went away: the next file of the diff they were in that is still there,
+        // else the one before.
+        int last = -1, first = int(m_onlyOrder.size());
+        for (const QString &p : m_onlyFiles) {
+            const int i = int(m_onlyOrder.indexOf(p));
+            if (i < 0) continue;
+            last = qMax(last, i);
+            first = qMin(first, i);
+        }
+        for (int i = last + 1; show.isEmpty() && last >= 0 && i < m_onlyOrder.size(); ++i)
+            if (paths.contains(m_onlyOrder[i])) show << m_onlyOrder[i];
+        for (int i = first - 1; show.isEmpty() && i >= 0; --i)
+            if (paths.contains(m_onlyOrder[i])) show << m_onlyOrder[i];
+        if (switched) *switched = !show.isEmpty();
+    }
+    m_onlyFiles = show;
+    m_onlyOrder = paths;
+    m_onlyKey = diffKey();
+    if (show.isEmpty()) return diff;   // none of them in this diff: all files
+    DiffResult out = diff;
+    out.files.clear();
+    for (const FileDiff &f : diff.files)
+        if (show.contains(f.path())) out.files.append(f);
+    return out;
+}
+
+void RepoTab::onFileSelectionChanged() {
+    if (m_fillingFiles || !onlySelectedActive()) return;
+    m_onlyFiles = selectedFiles(QString());
+    m_onlyKey = diffKey();
+    m_diff->replaceDiff(onlySelectedDiff(m_lastDiff));
+    if (!m_onlyFiles.isEmpty()) m_diff->scrollToFile(m_onlyFiles.first());
+}
+
+void RepoTab::selectFilesInList(const QStringList &paths) {
+    QItemSelection sel;
+    int cur = -1;
+    for (const QString &p : paths) {
+        const int r = m_fileModel->rowOfPath(p);
+        if (r < 0) continue;
+        sel.select(m_fileModel->index(r), m_fileModel->index(r));
+        if (cur < 0) cur = r;
+    }
+    if (cur < 0) return;
+    QSignalBlocker b(m_files->selectionModel());
+    m_files->selectionModel()->setCurrentIndex(m_fileModel->index(cur), QItemSelectionModel::NoUpdate);
+    m_files->selectionModel()->select(sel, QItemSelectionModel::ClearAndSelect);
+    m_files->viewport()->update();
 }
 
 void RepoTab::applyHunkAnchor() {
@@ -1018,6 +1118,7 @@ void RepoTab::fillFileList() {
         if (m_hasSelection) startDiff();
         return;
     }
+    QScopedValueRollback filling(m_fillingFiles, true);
     QList<FileListModel::Entry> entries;
     for (const FileDiff &f : m_lastDiff.files) {
         FileListModel::Entry e{f.path(), f.status};

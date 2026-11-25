@@ -146,6 +146,7 @@ void Settings::load() {
     groupFiles = q.value(QStringLiteral("groupFiles"), groupFiles).toBool();
     diffContext = q.value(QStringLiteral("diffContext"), diffContext).toInt();
     ignoreSpace = q.value(QStringLiteral("ignoreSpace"), ignoreSpace).toBool();
+    onlySelectedFiles = q.value(QStringLiteral("onlySelectedFiles"), onlySelectedFiles).toBool();
     wordDiff = q.value(QStringLiteral("wordDiff"), wordDiff).toInt();
     submoduleDiff = q.value(QStringLiteral("submoduleDiff"), submoduleDiff).toInt();
     dateFormat = q.value(QStringLiteral("dateFormat"), dateFormat).toString();
@@ -219,6 +220,7 @@ void Settings::save() const {
     q.setValue(QStringLiteral("groupFiles"), groupFiles);
     q.setValue(QStringLiteral("diffContext"), diffContext);
     q.setValue(QStringLiteral("ignoreSpace"), ignoreSpace);
+    q.setValue(QStringLiteral("onlySelectedFiles"), onlySelectedFiles);
     q.setValue(QStringLiteral("wordDiff"), wordDiff);
     q.setValue(QStringLiteral("submoduleDiff"), submoduleDiff);
     q.setValue(QStringLiteral("dateFormat"), dateFormat);

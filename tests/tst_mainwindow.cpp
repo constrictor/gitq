@@ -500,6 +500,63 @@ private slots:
         QTRY_COMPARE(diff->hunkLineOffset(g, 0).value_or(-999), 10);
     }
 
+    void onlySelectedFiles() {
+        QByteArray text;
+        for (int i = 1; i <= 60; ++i) text += QByteArray::number(i) + '\n';
+        QByteArray twoHunks = text;
+        twoHunks.replace("\n5\n", "\nfive\n").replace("\n40\n", "\nforty\n");
+        test::TestRepo r;
+        r.commit("Base", {{"a.txt", text}, {"b.txt", text}, {"c.txt", text}});
+        r.write("a.txt", text + "a\n");
+        r.write("b.txt", twoHunks);
+        r.write("c.txt", text + "c\n");
+        const QString a = QStringLiteral("a.txt"), b = QStringLiteral("b.txt"), c = QStringLiteral("c.txt");
+
+        MainWindow w(r.path(), {});
+        w.resize(1200, 900);
+        w.show();
+        waitLoaded(&w);
+        child<QTreeView>(&w, "commitList")->setCurrentIndex(model(&w)->index(0, 0));
+        QTRY_COMPARE(diffFiles(&w), QStringList({a, b, c}));
+        auto *diff = child<DiffView>(&w, "diffView");
+        auto *files = child<QListView>(&w, "fileList");
+        auto *fileModel = qobject_cast<FileListModel *>(files->model());
+        auto selectedPaths = [&] {
+            QStringList out;
+            for (const QModelIndex &i : files->selectionModel()->selectedIndexes()) out << i.data(FileListModel::PathRole).toString();
+            return out;
+        };
+
+        // Nothing selected: everything. Select b.txt: only it.
+        child<QCheckBox>(&w, "onlySelectedFiles")->setChecked(true);
+        QCOMPARE(diffFiles(&w), QStringList({a, b, c}));
+        files->selectionModel()->setCurrentIndex(fileModel->index(fileModel->rowOfPath(b)), QItemSelectionModel::ClearAndSelect);
+        QCOMPARE(diffFiles(&w), QStringList({b}));
+
+        // Staging one of its hunks keeps it shown (the index row appears: a reload).
+        QMetaObject::invokeMethod(diff, "hunkActionRequested", Q_ARG(QString, b), Q_ARG(int, 0), Q_ARG(int, DiffView::StageAction));
+        QTRY_COMPARE(model(&w)->rowCount(), 3);
+        QTRY_COMPARE(diff->hunkCount(b), 1);
+        QCOMPARE(diffFiles(&w), QStringList({b}));
+        QCOMPARE(selectedPaths(), QStringList({b}));
+
+        // Staging its last hunk: the next file is shown and selected.
+        QMetaObject::invokeMethod(diff, "hunkActionRequested", Q_ARG(QString, b), Q_ARG(int, 0), Q_ARG(int, DiffView::StageAction));
+        QTRY_COMPARE(diffFiles(&w), QStringList({c}));
+        QCOMPARE(selectedPaths(), QStringList({c}));
+
+        // No next file: the one before.
+        QMetaObject::invokeMethod(diff, "fileActionRequested", Q_ARG(QString, c), Q_ARG(int, DiffView::StageAction));
+        QTRY_COMPARE(diffFiles(&w), QStringList({a}));
+        QCOMPARE(selectedPaths(), QStringList({a}));
+
+        // Unchecked: all files again.
+        r.write("c.txt", text + "c\nmore\n");
+        child<QCheckBox>(&w, "onlySelectedFiles")->setChecked(false);
+        QTRY_COMPARE(diffFiles(&w), QStringList({a, c}));
+        Settings::instance().onlySelectedFiles = false;
+    }
+
     void commitPaneDocked() {
         MainWindow w(repo->path(), {});
         w.resize(1200, 900);

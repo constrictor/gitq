@@ -40,6 +40,7 @@ struct Settings {
     bool groupFiles = false;          // file list: grouped by folder
     int diffContext = 3;
     bool ignoreSpace = false;
+    bool onlySelectedFiles = false;   // the diff shows only the files selected in the file list
     int wordDiff = 0;            // 0 line diff, 1 markup words, 2 color words
     int submoduleDiff = 1;       // DiffOptions::Submodules: 0 summary, 1 commits, 2 full diff
     QString dateFormat = QStringLiteral("yyyy-MM-dd HH:mm:ss");

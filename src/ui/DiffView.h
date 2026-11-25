@@ -51,6 +51,8 @@ public:
     void showRangeHeader(const QString &text);
     void showNearby(const NearbyRefs &nearby, int maxRefs);
     void appendDiff(const DiffResult &diff);
+    // Replaces the diff shown below the header (nothing if no diff was appended yet).
+    void replaceDiff(const DiffResult &diff);
     void showFileContents(const QString &path, const QString &text);
 
     void setMode(Mode m) { m_mode = m; }

@@ -228,6 +228,7 @@ private:
     QToolButton *m_unified, *m_split;
     QSpinBox *m_contextSpin;
     QToolButton *m_ignoreSpace;
+    QCheckBox *m_onlySelected;
     Choice *m_wordDiff;
     Choice *m_submoduleMode;
     DiffView *m_diff;
@@ -260,6 +261,18 @@ private:
     };
     std::optional<HunkAnchor> m_hunkAnchor;
     void applyHunkAnchor();
+    // "Selected files only": the files the diff shows (empty: all), the files of the diff they
+    // were picked from in order, and that diff's commit / range. When the files go away (staged,
+    // say), the next file still there is shown, else the one before.
+    QStringList m_onlyFiles, m_onlyOrder;
+    QString m_onlyKey;
+    bool m_fillingFiles = false;   // the file list is being refilled: not a selection by the user
+    bool onlySelectedActive() const;
+    QString diffKey() const;
+    // Picks the files to show of `diff` (updating m_onlyFiles), returns the diff to display.
+    DiffResult onlySelectedDiff(const DiffResult &diff, bool *switched = nullptr);
+    void onFileSelectionChanged();
+    void selectFilesInList(const QStringList &paths);
     QSet<QString> m_expandedSubmodules;         // submodules whose files are shown (SubmoduleLog)
     bool m_selectFirstWhenDone = false;
     QList<Oid> m_history;
